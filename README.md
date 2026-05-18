@@ -78,11 +78,7 @@ ChromaTrace KZN is a paper-based colorimetric diagnostic proxy strip designed to
 ## Project Lead
 
 Shay Bagaria
-Independent Researcher, KwaZulu-Natal, South Africa
-NYAS Junior Academy Member
-Founder, Hearts and Hands Foundation
-
-Contact: shay.bagaria.research@gmail.com
+Contact: sbagaria2009@gmail.com
 
 ---
 
