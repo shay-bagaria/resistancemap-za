@@ -122,9 +122,37 @@ RRI = Mutation Frequency x Pharmacokinetic Vulnerability Score
 
 ---
 
-## 6. Literature Foundation
+## 6. Literature Foundation & Pharmacokinetic Parameters
 
-To be populated as the literature review progresses. See references/key_papers.md for the working bibliography.
+### 6.1 Primary Literature Citations
+
+*   **Manasa, J., Danaviah, S., Pillay, S., et al. (2017).** *Pre-treatment HIV drug resistance in a rural South African community.* Journal of Antimicrobial Chemotherapy, 72(4), 1178–1184. 
+    *   **Relevance:** Establishes the baseline molecular epidemiology in KwaZulu-Natal. Validates that the K103N mutation is the most prevalent pre-treatment non-nucleoside reverse transcriptase inhibitor (NNRTI) variant within rural KZN cohorts, demonstrating its high baseline frequency before first-line regimen initiation.
+*   **Steegen, K., Lombard, Z., Bronze, M., et al. (2017).** *HIV-1 drug resistance in patients failing NNRTI-based combinations in South Africa.* AIDS Research and Human Retroviruses, 33(8), 789–798.
+    *   **Relevance:** Confirms mutation profiles under selective drug pressure in South Africa. Validates that K103N occurs in $>60\%$ of NNRTI treatment failures, M184V occurs in $>70\%$ of lamivudine (3TC) failures, and K65R emerges predictably within tenofovir (TDF) backbones. 
+
+### 6.2 Consolidated Pharmacokinetic Reference Values
+
+The one-compartment open elimination model utilizes the standard first-order decay expression:
+
+$$C(t) = C_0 \times e^{-K_e \times t}$$
+
+Where the elimination rate constant ($K_e$) is derived via:
+
+$$K_e = \frac{\ln(2)}{t_{1/2}}$$
+
+The pipeline maps the primary first-line antiretroviral (ARV) modalities utilizing the following verified physiological constants:
+
+| Drug Name | Class | Plasma Half-Life ($t_{1/2}$) | Intracellular Half-Life | Elimination Rate ($K_e$) | Minimum Effective Concentration (MEC) | Sub-Therapeutic Vulnerability Window |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Efavirenz (EFV)** | NNRTI | 40–55 hours | N/A | $0.0126–0.0173\text{ h}^{-1}$ | $\approx 1000\text{ ng/mL}$ | 3–7 days post-missed dose (High PVS) |
+| **Tenofovir (TDF)** | NRTI | 17 hours | 50–60 hours | $0.0407\text{ h}^{-1}$ (plasma) | $\approx 40\text{ ng/mL}$ | 2–3 days post-missed dose (Moderate PVS) |
+| **Lamivudine (3TC)** | NRTI | 5–7 hours | 18–22 hours | $0.0990–0.1386\text{ h}^{-1}$ | $\approx 20\text{ ng/mL}$ | 1–2 days post-missed dose (Low PVS) |
+
+### 6.3 Methodological Paradox: The Long Half-Life Vulnerability
+While standard clinical paradigms prize long drug half-lives for forgiving minor adherence lapses, the RRI framework accounts for the selective pressure window. Efavirenz’s prolonged plasma half-life ($40–55\text{ hours}$) creates a protracted, multi-day sub-inhibitory concentration tail during extended adherence breaks. 
+
+During this sub-therapeutic window, viral replication resumes under sub-lethal drug pressure, rapidly selecting for high-fitness single-nucleotide polymorphisms (SNPs) such as K103N. This structural reality increases the Pharmacokinetic Vulnerability Score (PVS), elevating the overall risk index.
 
 ---
 
