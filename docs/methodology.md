@@ -12,7 +12,7 @@ Author: Shay Bagaria
 The human immunodeficiency virus type 1 (HIV-1) pol gene encodes three critical enzymes:
 
 - Protease (PR): Cleaves viral polyproteins into functional units during viral maturation
-- Reverse Transcriptase (RT): Converts viral RNA into DNA — the primary target of most antiretroviral drugs
+- Reverse Transcriptase (RT): Converts viral RNA into DNA, the primary target of most antiretroviral drugs
 - Integrase (IN): Inserts viral DNA into the host cell genome
 
 The pol gene is the primary target of this pipeline because:
@@ -37,7 +37,7 @@ The following mutations are the primary targets of Phase 1 analysis, selected ba
 | K103N | RT | Efavirenz, Nevirapine | Most common NNRTI resistance mutation in sub-Saharan Africa |
 | M184V | RT | Lamivudine, Emtricitabine | High-level resistance, also reduces viral fitness |
 | K65R | RT | Tenofovir | Emerging resistance to the backbone of first-line therapy |
-| M41L | RT | Thymidine analogues | TAM that accumulates with treatment failure |
+| M41L | RT | Thymidine analogues | Thymidine Analogue Mutation that accumulates with treatment failure |
 | V179D/E | RT | Low-level NNRTI resistance | Increasingly documented in KZN surveillance studies |
 
 This list will be expanded as data analysis progresses.
@@ -61,7 +61,7 @@ Where:
 
 The elimination rate constant is derived from the drug half-life:
 
-Ke = ln(2) / t-half
+Ke = ln(2) divided by half-life
 
 ### Drug Half-Life Values for First-Line KZN Regimens
 
@@ -93,7 +93,7 @@ The RRI converts two separate variables into a single actionable score.
 
 - Derived from the drug half-life model
 - Calculated as the normalised duration of sub-inhibitory concentration window during a standard 24-hour missed dose scenario
-- Longer half-life equals higher PVS (paradoxically more dangerous)
+- Longer half-life equals higher PVS, paradoxically more dangerous
 - Range: 0.0 to 1.0
 
 ### The RRI Formula
@@ -117,4 +117,15 @@ RRI = Mutation Frequency x Pharmacokinetic Vulnerability Score
 |---|---|---|
 | NCBI GenBank | ncbi.nlm.nih.gov | Primary genomic sequence repository |
 | Stanford HIVDB | hivdb.stanford.edu | Mutation resistance classification |
-| EMBL-EBI |
+| EMBL-EBI | ebi.ac.uk | Secondary sequence validation |
+| HXB2 Reference | GenBank K03455 | Alignment reference genome |
+
+---
+
+## 6. Literature Foundation
+
+To be populated as the literature review progresses. See references/key_papers.md for the working bibliography.
+
+---
+
+This document is a living methodology record and will be updated as the pipeline develops.
