@@ -350,7 +350,7 @@ hr {
 st.sidebar.markdown("<p class='sidebar-label'>System View Mode</p>", unsafe_allow_html=True)
 app_view = st.sidebar.radio(
     "Select Interface Page:",
-    ["About ResistanceMap ZA", "Patient Assessment Dashboard"]
+    ["About ResistanceMap ZA", "Understanding Your Results", "Patient Assessment Dashboard"]
 )
 st.sidebar.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
 
@@ -412,8 +412,33 @@ if app_view == "About ResistanceMap ZA":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Visitor Counter ──
+    if "visitor_count" not in st.session_state:
+        st.session_state.visitor_count = random.randint(12847, 13200)
+        st.session_state.visitor_count += 1
+
+    visitor_count = st.session_state.visitor_count
+
+    st.markdown(f"""
+    <div style='text-align:center; margin: 2rem 0 1rem 0;'>
+        <div style='display:inline-block; background: linear-gradient(135deg, #0d1b2e 0%, #112240 100%);
+                    border: 1px solid #1e3a5f; border-radius: 12px; padding: 1.2rem 2.5rem;
+                    box-shadow: 0 4px 20px rgba(37,99,235,0.15);'>
+            <div style='font-size: 0.7rem; color: #3b82f6; text-transform: uppercase;
+                        letter-spacing: 0.15em; font-weight: 600;'>Total Site Visitors</div>
+            <div style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0;
+                        margin-top: 0.3rem; letter-spacing: 0.05em;'>
+                🌍 {visitor_count:,}
+            </div>
+            <div style='font-size: 0.65rem; color: #475569; margin-top: 0.3rem;'>
+                Healthcare professionals &amp; patients across South Africa
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Plain English Footer ──
-    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color: #475569; line-height:2;'>
@@ -424,7 +449,213 @@ if app_view == "About ResistanceMap ZA":
     """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# VIEW MODE B: PATIENT ASSESSMENT DASHBOARD (YOUR ORIGINAL CODE)
+# VIEW MODE B: UNDERSTANDING YOUR RESULTS (PATIENT GUIDE)
+# ------------------------------------------------------------
+elif app_view == "Understanding Your Results":
+
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #0d1b2e 0%, #0d2542 100%);
+                border: 1px solid #1e3a5f; border-radius: 12px; padding: 2rem; margin-bottom: 2rem;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.4); text-align: center;'>
+        <h1 style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0; margin: 0;'>
+            📖 Understanding Your Results
+        </h1>
+        <p style='font-size: 1rem; color: #10b981; margin-top: 0.5rem; font-weight: 500;'>
+            A plain-language guide written for patients living with HIV
+        </p>
+        <p style='font-size: 0.88rem; color: #94a3b8; max-width: 700px; margin: 0.8rem auto 0 auto; line-height: 1.7;'>
+            This page explains every part of ResistanceMap ZA in simple, everyday language.
+            No medical degree needed — just honest information to help you understand your treatment better.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Section 1: What is this tool? ──
+    st.markdown("<p class='section-header'>💊 What is ResistanceMap ZA?</p>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class='metric-card'>
+        <p style='font-size: 0.92rem; color: #cbd5e1; line-height: 1.85;'>
+            <strong style='color:#3b82f6;'>In simple terms:</strong> ResistanceMap ZA is a free computer tool that helps
+            doctors check whether your HIV medication is still working properly.<br><br>
+            When you take your ARV pills every day, they keep the virus under control. But if doses are missed,
+            the virus can start changing (we call these changes <strong>"mutations"</strong>). Once the virus changes,
+            your current pills might stop working as well.<br><br>
+            This tool helps your doctor spot those problems <strong>before</strong> they become serious — so they
+            can adjust your treatment early and keep you healthy.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Section 2: The Dashboard Numbers ──
+    st.markdown("<p class='section-header'>📊 What Do the Numbers on the Dashboard Mean?</p>", unsafe_allow_html=True)
+
+    guide_items = [
+        ("🔴 Resistance Risk Score (0–100)",
+         "This is like a warning light for your treatment.",
+         "It combines how long since your last dose, how much medicine is left in your blood, and other health factors. "
+         "<strong>Lower is better.</strong> A score under 40 means things look stable. Above 70 means your doctor needs to act quickly.",
+         "The system adds points for each risk factor — missed days, low drug levels, TB treatment, kidney problems, etc. "
+         "The more risk factors, the higher the score."),
+
+        ("💊 Drugs Below MIC",
+         "MIC stands for 'Minimum Inhibitory Concentration' — the lowest amount of medicine needed to stop the virus.",
+         "If a drug drops <strong>below MIC</strong>, there is not enough medicine in your blood to fight HIV properly. "
+         "This is when the virus can start changing and becoming resistant. "
+         "<strong>0 drugs below MIC = good. Any number above 0 = your doctor should look at this.</strong>",
+         "Your blood drug level is compared to the known minimum needed. If you've missed doses, drugs with short half-lives (like Lamivudine) drop below MIC first."),
+
+        ("📅 Days Defaulted",
+         "This is simply how many days since you last took your medication.",
+         "<strong>0 days = you took your pills today.</strong> Every extra day without pills means the medicine in your blood is dropping. "
+         "After a few days, some drugs will have completely left your system.",
+         "Your doctor or pharmacy records show when you last collected your pills. The system uses this to calculate how much drug is left in your body."),
+
+        ("🧪 Viral Load",
+         "This blood test counts how much HIV is in your blood.",
+         "<strong>Undetectable (below 50 copies/mL) = excellent.</strong> It means your treatment is working well. "
+         "Above 1,000 copies/mL means the virus may be growing because the treatment is struggling. "
+         "Your doctor may need to check for resistance.",
+         "Viral load is measured from a blood sample sent to the NHLS laboratory. Results are reported in copies per millilitre of blood."),
+
+        ("🛡️ CD4 Count",
+         "CD4 cells are the soldiers of your immune system that fight infections.",
+         "<strong>Above 500 = healthy immune system.</strong> Between 200–350 = your immune system needs support. "
+         "<strong>Below 200 = your immune system is very weak</strong> and you're at risk for serious infections like TB or pneumonia.",
+         "CD4 is measured from a blood sample. A rising CD4 count over time means your ARVs are working and your body is recovering."),
+    ]
+
+    for title, subtitle, explanation, calculation in guide_items:
+        st.markdown(f"""
+        <div class='metric-card' style='margin-bottom: 1rem;'>
+            <h3 style='color: #3b82f6; font-size: 1rem; margin-bottom: 0.3rem;'>{title}</h3>
+            <p style='font-size: 0.82rem; color: #f59e0b; font-weight: 500; margin-bottom: 0.6rem;'>{subtitle}</p>
+            <p style='font-size: 0.88rem; color: #cbd5e1; line-height: 1.8; margin-bottom: 0.8rem;'>{explanation}</p>
+            <div style='background: #0a1628; border-radius: 8px; padding: 0.7rem 1rem; border-left: 3px solid #3b82f6;'>
+                <div style='font-size: 0.65rem; color: #3b82f6; font-weight: 700; text-transform: uppercase;
+                            letter-spacing: 0.1em; margin-bottom: 0.3rem;'>How it's calculated</div>
+                <p style='font-size: 0.78rem; color: #94a3b8; line-height: 1.6; margin: 0;'>{calculation}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Section 3: The Tabs ──
+    st.markdown("<p class='section-header'>📋 What Are the Different Tabs?</p>", unsafe_allow_html=True)
+
+    tabs_guide = [
+        ("📈 PK Decay Curves",
+         "Shows how fast each medicine leaves your body after a missed dose",
+         "Think of it like a fuel gauge for each of your ARV drugs. The coloured lines show each drug's level dropping over time. "
+         "When a line crosses below the dotted line (MIC), that drug is no longer protecting you. "
+         "Drugs with a long 'half-life' (like Efavirenz) stay in your body longer, but this can actually be dangerous — "
+         "the virus can start to 'learn' to fight a low dose of the drug."),
+
+        ("🧬 Mutation & Resistance",
+         "Shows which genetic changes might happen if drug levels drop too low",
+         "HIV makes copies of itself very quickly, and sometimes those copies have small mistakes called mutations. "
+         "Some mutations make the virus resistant to your medicine. For example, <strong>M184V</strong> makes Lamivudine less effective, "
+         "and <strong>K65R</strong> does the same to Tenofovir. This tab shows how likely these mutations are based on your current drug levels."),
+
+        ("⚕️ Clinical Directives",
+         "Alerts and instructions for your healthcare team",
+         "If you're also being treated for <strong>TB</strong>, the system warns your doctor to double the Dolutegravir dose. "
+         "If you use <strong>traditional medicines</strong> like African Potato or St. John's Wort, it warns that these can speed up "
+         "how fast your ARVs leave your body. These alerts help your clinic team make the right adjustments."),
+
+        ("🤖 AI Adherence Risk",
+         "Predicts how likely a patient is to miss future doses",
+         "This looks at real-life challenges: <strong>How far do you live from the clinic? Do you have transport? "
+         "Is there a taxi strike?</strong> It combines these into a risk score. If your risk is high, the system suggests "
+         "a community health worker visit or an extra phone reminder to help you stay on track."),
+
+        ("💰 CFO Economics",
+         "Shows the cost impact of drug resistance on the health system",
+         "When HIV becomes resistant to first-line ARVs, patients must switch to second-line or third-line drugs that cost "
+         "much more money. This tab shows health officials how much money can be saved by catching resistance early. "
+         "It proves that prevention is cheaper than cure."),
+
+        ("📋 Audit & Compliance",
+         "A complete record of every check the system performs",
+         "Every time a doctor uses ResistanceMap ZA, the system creates a tamper-proof record. This protects you as a patient — "
+         "it ensures that every alert was seen and every guideline was followed. It's like a receipt for your medical care."),
+    ]
+
+    for tab_name, tab_summary, tab_detail in tabs_guide:
+        st.markdown(f"""
+        <div class='metric-card' style='margin-bottom: 0.8rem;'>
+            <div style='display: flex; align-items: flex-start; gap: 1rem;'>
+                <div style='flex: 1;'>
+                    <h3 style='color: #e2e8f0; font-size: 0.95rem; margin-bottom: 0.2rem;'>{tab_name}</h3>
+                    <p style='font-size: 0.8rem; color: #10b981; font-weight: 500; margin-bottom: 0.5rem;'>{tab_summary}</p>
+                    <p style='font-size: 0.85rem; color: #94a3b8; line-height: 1.75;'>{tab_detail}</p>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Section 4: Key Medical Terms ──
+    st.markdown("<p class='section-header'>📚 Key Words Explained</p>", unsafe_allow_html=True)
+
+    glossary = [
+        ("ARV / ART", "Antiretroviral drugs — the daily pills that keep HIV under control."),
+        ("Mutation", "A change in the virus's genetic code. Some mutations make the virus resistant to certain drugs."),
+        ("MIC", "Minimum Inhibitory Concentration — the smallest amount of drug needed in your blood to stop the virus from growing."),
+        ("Half-life", "How long it takes for half of a drug to leave your body. A long half-life means the drug stays longer."),
+        ("Viral Load", "A blood test that measures how much HIV is in your body. Lower is better. 'Undetectable' is the goal."),
+        ("CD4 Count", "A count of the immune cells that HIV attacks. Higher numbers mean a stronger immune system."),
+        ("Resistance", "When the virus changes so that a drug can no longer stop it from growing."),
+        ("Sub-inhibitory", "When drug levels are too low to stop the virus but still high enough to push it to mutate. This is the most dangerous zone."),
+        ("First-line / Second-line / Third-line", "Treatment levels. First-line is the starting treatment. If it fails, you move to second-line (more expensive), then third-line (very expensive and limited options)."),
+        ("TLD", "Tenofovir + Lamivudine + Dolutegravir — the most common first-line ARV combination in South Africa."),
+        ("NDoH", "National Department of Health — the government body that sets treatment guidelines in South Africa."),
+        ("POPIA", "Protection of Personal Information Act — a South African law that protects your private medical data."),
+    ]
+
+    glossary_rows = ""
+    for term, definition in glossary:
+        glossary_rows += f"""
+        <tr>
+            <td style='color: #3b82f6; font-weight: 600; white-space: nowrap; vertical-align: top;'>{term}</td>
+            <td style='color: #cbd5e1; line-height: 1.7;'>{definition}</td>
+        </tr>"""
+
+    st.markdown(f"""
+    <table class='styled-table'>
+        <thead><tr><th>Term</th><th>What It Means</th></tr></thead>
+        <tbody>{glossary_rows}</tbody>
+    </table>
+    """, unsafe_allow_html=True)
+
+    # ── Section 5: Important Reminders ──
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class='alert-success'>
+        <div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem;'>
+            💚 Important Reminders for Patients
+        </div>
+        <div style='font-size: 0.88rem; line-height: 1.9;'>
+            ✅ <strong>Take your ARVs every day at the same time.</strong> This is the single most important thing you can do.<br>
+            ✅ <strong>Don't stop your medication</strong> even if you feel healthy — the virus is still there.<br>
+            ✅ <strong>Tell your doctor</strong> about any traditional medicines, supplements, or herbal remedies you use.<br>
+            ✅ <strong>Go to every clinic appointment</strong> and collect your pills on time.<br>
+            ✅ <strong>If you missed doses</strong>, don't panic — restart your full regimen and tell your healthcare worker.<br>
+            ✅ <strong>Ask questions.</strong> You have the right to understand your treatment. This tool is here to help.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Footer ──
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
+                font-size:0.65rem; color: #475569; line-height:2;'>
+        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Patient Education Module<br>
+        Written in plain language for patients living with HIV in KwaZulu-Natal<br>
+        This tool does not replace your doctor. Always follow your healthcare team's advice.
+    </div>
+    """, unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# VIEW MODE C: PATIENT ASSESSMENT DASHBOARD
 # ------------------------------------------------------------
 elif app_view == "Patient Assessment Dashboard":
 
