@@ -12,6 +12,43 @@ from plotly.subplots import make_subplots
 import datetime
 import time
 import random
+import os
+import json
+import filelock
+
+# ============================================================
+# PERSISTENT VISITOR COUNTER LOGIC
+# ============================================================
+COUNTER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visitor_counter.json")
+COUNTER_LOCK = COUNTER_FILE + ".lock"
+
+def get_and_increment_visitor_count():
+    """Read current count, increment by 1, save back. Thread-safe via file lock."""
+    lock = filelock.FileLock(COUNTER_LOCK, timeout=5)
+    with lock:
+        if os.path.exists(COUNTER_FILE):
+            with open(COUNTER_FILE, "r") as f:
+                data = json.load(f)
+        else:
+            data = {"count": 0}
+        data["count"] += 1
+        with open(COUNTER_FILE, "w") as f:
+            json.dump(data, f)
+    return data["count"]
+
+def get_visitor_count():
+    """Read current count without incrementing."""
+    if os.path.exists(COUNTER_FILE):
+        with open(COUNTER_FILE, "r") as f:
+            return json.load(f).get("count", 0)
+    return 0
+
+# Increment once per unique session
+if "_visitor_counted" not in st.session_state:
+    st.session_state._visitor_counted = True
+    st.session_state._visitor_total = get_and_increment_visitor_count()
+else:
+    st.session_state._visitor_total = get_visitor_count()
 
 # ============================================================
 # 1. ENTERPRISE PAGE CONFIGURATION & GLOBAL STYLING
@@ -413,11 +450,7 @@ if app_view == "About ResistanceMap ZA":
     """, unsafe_allow_html=True)
 
     # ── Visitor Counter ──
-    if "visitor_count" not in st.session_state:
-        st.session_state.visitor_count = random.randint(12847, 13200)
-        st.session_state.visitor_count += 1
-
-    visitor_count = st.session_state.visitor_count
+    visitor_count = st.session_state._visitor_total
 
     st.markdown(f"""
     <div style='text-align:center; margin: 2rem 0 1rem 0;'>
