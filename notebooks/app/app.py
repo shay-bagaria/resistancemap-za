@@ -819,14 +819,26 @@ elif app_view == "Patient Assessment Dashboard":
             "mutation": "R263K", "class": "INSTI",
             "cross_resistance": ["G118R", "E138K/A/T", "Q148R"],
             "renal_sensitive": False, "color": "#10b981"
+        },
+        "Efavirenz": {
+            "t_half": 52.0, "c_max": 4.07, "mic": 0.51,
+            "mutation": "K103N", "class": "NNRTI",
+            "cross_resistance": ["Y181C", "G190A", "V106M"],
+            "renal_sensitive": False, "color": "#a855f7"
+        },
+        "Abacavir": {
+            "t_half": 1.5, "c_max": 3.0, "mic": 0.26,
+            "mutation": "L74V", "class": "NRTI",
+            "cross_resistance": ["Y115F", "M184V"],
+            "renal_sensitive": False, "color": "#ec4899"
         }
     }
 
     # ── Regimen Drug Mapping ──
     regimen_drugs = {
         "TLD (Tenofovir + Lamivudine + Dolutegravir)": ["Tenofovir", "Lamivudine", "Dolutegravir"],
-        "TLE (Tenofovir + Lamivudine + Efavirenz)":    ["Tenofovir", "Lamivudine"],
-        "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)": ["Lamivudine", "Dolutegravir"]
+        "TLE (Tenofovir + Lamivudine + Efavirenz)":    ["Tenofovir", "Lamivudine", "Efavirenz"],
+        "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)": ["Abacavir", "Lamivudine", "Dolutegravir"]
     }
 
     active_drugs = regimen_drugs.get(regimen, ["Tenofovir", "Lamivudine", "Dolutegravir"])
@@ -841,10 +853,18 @@ elif app_view == "Patient Assessment Dashboard":
             t_half *= 0.50
             applied.append(("Rifampicin CYP3A4 Induction", "−50% DTG half-life"))
 
+        if tb_coinfection and drug == "Efavirenz":
+            t_half *= 0.74
+            applied.append(("Rifampicin CYP3A4 Induction", "−26% EFV half-life"))
+
         # Traditional Medicine CYP450
         if traditional_meds and drug == "Dolutegravir":
             t_half *= 0.65
             applied.append(("Traditional Medicine CYP450", "−35% DTG half-life"))
+
+        if traditional_meds and drug == "Efavirenz":
+            t_half *= 0.70
+            applied.append(("Traditional Medicine CYP450", "−30% EFV half-life"))
 
         # Renal Impairment
         renal_factor = 1.0
@@ -1163,7 +1183,7 @@ elif app_view == "Patient Assessment Dashboard":
                 title_text="% MIC Coverage", row=2, col=1
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col_status:
             st.markdown("<p class='section-header'>Drug Status Panel</p>", unsafe_allow_html=True)
@@ -1238,7 +1258,7 @@ elif app_view == "Patient Assessment Dashboard":
                 height=200,
                 margin=dict(l=10, r=10, t=30, b=10)
             )
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.plotly_chart(fig_gauge, width="stretch")
 
     # ────────────────────────────────────────────────────────────
     # TAB 2: MUTATION & CROSS-RESISTANCE PREDICTOR
@@ -1337,7 +1357,7 @@ elif app_view == "Patient Assessment Dashboard":
                 annotation_font_size=10
             )
 
-            st.plotly_chart(fig_mut, use_container_width=True)
+            st.plotly_chart(fig_mut, width="stretch")
 
             # ── Cross-Resistance Map ──
             st.markdown("<p class='section-header'>Cross-Resistance Cascade Analysis</p>",
@@ -1398,6 +1418,18 @@ elif app_view == "Patient Assessment Dashboard":
                     "description": "Rare integrase mutation. DTG has extremely high genetic barrier — R263K requires pre-existing INSTI resistance background (G118R, E138K) to achieve clinical resistance.",
                     "second_line": "Consider Bictegravir or Cabotegravir. Genotypic resistance testing mandatory before switch.",
                     "severity": "SEVERE"
+                },
+                "K103N": {
+                    "name": "K103N (Efavirenz Resistance)",
+                    "description": "Lysine→Asparagine substitution at codon 103 of reverse transcriptase. Confers high-level resistance to all first-generation NNRTIs (Efavirenz, Nevirapine). Most common NNRTI resistance mutation globally.",
+                    "second_line": "Switch to INSTI-based regimen (DTG). K103N does not affect second-generation NNRTIs like Etravirine but INSTI switch preferred per NDoH guidelines.",
+                    "severity": "HIGH"
+                },
+                "L74V": {
+                    "name": "L74V (Abacavir Resistance)",
+                    "description": "Leucine→Valine substitution at codon 74. Reduces Abacavir susceptibility by 3–5 fold. Often emerges with Didanosine use. Does not significantly affect Tenofovir.",
+                    "second_line": "Switch to Tenofovir-based backbone. L74V increases susceptibility to Zidovudine. Genotypic testing recommended.",
+                    "severity": "MODERATE"
                 }
             }
 
@@ -1738,7 +1770,7 @@ elif app_view == "Patient Assessment Dashboard":
                 height=260,
                 margin=dict(l=10, r=10, t=40, b=10)
             )
-            st.plotly_chart(fig_ad, use_container_width=True)
+            st.plotly_chart(fig_ad, width="stretch")
 
             st.markdown(f"""
             <div class='alert-{"critical" if adherence_risk >= 65 else "warning" if adherence_risk >= 40 else "info" if adherence_risk >= 20 else "success"}'>
@@ -1794,7 +1826,7 @@ elif app_view == "Patient Assessment Dashboard":
                     height=300,
                     margin=dict(l=0, r=40, t=10, b=0)
                 )
-                st.plotly_chart(fig_feat, use_container_width=True)
+                st.plotly_chart(fig_feat, width="stretch")
 
             # ── Intervention Protocol ──
             st.markdown("<p class='section-header'>Automated Intervention Protocol</p>",
@@ -1946,7 +1978,7 @@ elif app_view == "Patient Assessment Dashboard":
                 height=320,
                 margin=dict(l=0, r=0, t=40, b=0)
             )
-            st.plotly_chart(fig_wf, use_container_width=True)
+            st.plotly_chart(fig_wf, width="stretch")
 
         # ── Metrics Table ──
         st.markdown("<p class='section-header'>Value-per-Metric Breakdown</p>",
@@ -2214,8 +2246,7 @@ AUDIT INTEGRITY
                 label="📄 Download Clinical Report (.txt)",
                 data=report_text,
                 file_name=f"ResistanceMapZA_{patient_id}_{now.strftime('%Y%m%d_%H%M')}.txt",
-                mime="text/plain",
-                use_container_width=True
+                mime="text/plain"
             )
 
         with exp_col2:
