@@ -30,7 +30,11 @@ def get_and_increment_visitor_count():
             with open(COUNTER_FILE, "r") as f:
                 data = json.load(f)
         else:
-            data = {"count": 0}
+            data = {"count": 322}
+        
+        if data.get("count", 0) < 322:
+            data["count"] = 322
+            
         data["count"] += 1
         with open(COUNTER_FILE, "w") as f:
             json.dump(data, f)
@@ -40,8 +44,8 @@ def get_visitor_count():
     """Read current count without incrementing."""
     if os.path.exists(COUNTER_FILE):
         with open(COUNTER_FILE, "r") as f:
-            return json.load(f).get("count", 0)
-    return 0
+            return max(json.load(f).get("count", 322), 322)
+    return 322
 
 # Increment once per unique session
 if "_visitor_counted" not in st.session_state:
