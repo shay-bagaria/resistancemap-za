@@ -413,6 +413,27 @@ if app_view == "About ResistanceMap ZA":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Visitor Counter ──
+    visitor_count = st.session_state._visitor_total
+
+    st.markdown(f"""
+    <div style='text-align:center; margin: 0 0 2rem 0;'>
+        <div style='display:inline-block; background: linear-gradient(135deg, #0d1b2e 0%, #112240 100%);
+                    border: 1px solid #1e3a5f; border-radius: 12px; padding: 1.2rem 2.5rem;
+                    box-shadow: 0 4px 20px rgba(37,99,235,0.15);'>
+            <div style='font-size: 0.7rem; color: #3b82f6; text-transform: uppercase;
+                        letter-spacing: 0.15em; font-weight: 600;'>Total Site Visitors</div>
+            <div style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0;
+                        margin-top: 0.3rem; letter-spacing: 0.05em;'>
+                🌍 {visitor_count:,}
+            </div>
+            <div style='font-size: 0.65rem; color: #475569; margin-top: 0.3rem;'>
+                Healthcare professionals &amp; patients across South Africa
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
@@ -450,27 +471,6 @@ if app_view == "About ResistanceMap ZA":
         2. Toggle the option to <strong>Patient Assessment Dashboard</strong> to initialize the live data wangler.<br>
         3. Alter regional comorbidity profiles, adherence windows, and pediatric weight arrays to see real-time updates.<br>
         4. Review the cross-resistance cascade models and compliance metrics natively generated within individual tabs.
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Visitor Counter ──
-    visitor_count = st.session_state._visitor_total
-
-    st.markdown(f"""
-    <div style='text-align:center; margin: 2rem 0 1rem 0;'>
-        <div style='display:inline-block; background: linear-gradient(135deg, #0d1b2e 0%, #112240 100%);
-                    border: 1px solid #1e3a5f; border-radius: 12px; padding: 1.2rem 2.5rem;
-                    box-shadow: 0 4px 20px rgba(37,99,235,0.15);'>
-            <div style='font-size: 0.7rem; color: #3b82f6; text-transform: uppercase;
-                        letter-spacing: 0.15em; font-weight: 600;'>Total Site Visitors</div>
-            <div style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0;
-                        margin-top: 0.3rem; letter-spacing: 0.05em;'>
-                🌍 {visitor_count:,}
-            </div>
-            <div style='font-size: 0.65rem; color: #475569; margin-top: 0.3rem;'>
-                Healthcare professionals &amp; patients across South Africa
-            </div>
-        </div>
     </div>
     """, unsafe_allow_html=True)
 
