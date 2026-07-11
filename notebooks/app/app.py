@@ -408,7 +408,7 @@ if app_view == "About ResistanceMap ZA":
             Molecular Epidemiology & Pharmacokinetic Surveillance Engine
         </p>
         <p style='font-size: 0.95rem; color: #94a3b8; max-width: 800px; margin: 1rem auto 0 auto; line-height: 1.6;'>
-            An open-source, zero-cost computational framework mapping HIV-1 drug-resistance mutation clusters across KwaZulu-Natal to safeguard public therapeutic structures.
+            An open-source, zero-cost computational framework mapping HIV-1 drug-resistance mutation clusters across KwaZulu-Natal to safeguard public treatment programmes.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -440,7 +440,7 @@ if app_view == "About ResistanceMap ZA":
         <div class='metric-card' style='height: 100%;'>
             <h3 style='color: #3b82f6; font-size: 0.9rem;'>🔍 What is ResistanceMap ZA?</h3>
             <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
-                It is an advanced Clinical Decision Support System (CDSS) that tracks how HIV mutations gather in different communities. When patients miss treatment erratically, sub-inhibitory windows select for high-fitness variants. This platform models those drops to flag resistance patterns before they spread.
+                It is an advanced Clinical Decision Support System (CDSS) that tracks how HIV mutations cluster in different communities. When patients miss treatment erratically, sub-inhibitory windows select for drug-resistant variants. This platform models those drops to flag resistance patterns before they spread.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -458,7 +458,7 @@ if app_view == "About ResistanceMap ZA":
         <div class='metric-card' style='height: 100%;'>
             <h3 style='color: #3b82f6; font-size: 0.9rem;'>👥 Who is it for?</h3>
             <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
-                Built for frontline clinical professionals, health system program planners, and medical researchers. It bridges the gap between dry-lab biological genomic code streams (NCBI GenBank / Stanford HIVdb) and concrete local diagnostic support protocols.
+                Built for frontline clinical professionals, health system programme planners, and medical researchers. It bridges the gap between raw genomic sequence data (NCBI GenBank / Stanford HIVdb) and concrete local diagnostic support protocols.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -468,7 +468,7 @@ if app_view == "About ResistanceMap ZA":
     <div style='background: #0d1b2e; border: 1px solid #1e3a5f; border-radius: 8px; padding: 1.2rem 1.5rem; font-size: 0.88rem; line-height: 1.7; color: #cbd5e1;'>
         <strong>How to Navigate the Application Engine:</strong><br>
         1. Locate the <strong>System View Mode</strong> radio filter in the left sidebar menu.<br>
-        2. Toggle the option to <strong>Patient Assessment Dashboard</strong> to initialize the live data wangler.<br>
+        2. Toggle the option to <strong>Patient Assessment Dashboard</strong> to initialise the live assessment engine.<br>
         3. Alter regional comorbidity profiles, adherence windows, and pediatric weight arrays to see real-time updates.<br>
         4. Review the cross-resistance cascade models and compliance metrics natively generated within individual tabs.
     </div>
@@ -481,7 +481,7 @@ if app_view == "About ResistanceMap ZA":
                 font-size:0.65rem; color: #475569; line-height:2;'>
         ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Open Source Public Health System Framework<br>
         Licensor: ResistanceMap Technologies (Pty) Ltd &nbsp;·&nbsp; sbagaria2009@gmail.com<br>
-        POPIA Registered &nbsp;|&nbsp; NDoH Guidelines 2023 &nbsp;|&nbsp; Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Compliant
+        POPIA Compliant &nbsp;|&nbsp; NDoH Guidelines 2023 &nbsp;|&nbsp; Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Compliant
     </div>
     """, unsafe_allow_html=True)
 
@@ -1518,7 +1518,7 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient is using traditional preparations containing compounds that interact
-                    with the <strong>CYP2C9 / CYP3A4</strong> enzymatic pathways (Hypericin in St. John's Wort;
+                    with the <strong>CYP2C9 / CYP3A4</strong> enzymatic pathways (Hyperforin in St. John's Wort;
                     Phytosterols in African Potato).<br><br>
                     ⚡ <strong>Effect:</strong> Accelerated Dolutegravir clearance. Estimated plasma
                     concentration reduced by 30–40%.<br>
@@ -2280,7 +2280,7 @@ AUDIT INTEGRITY
         Licensor: ResistanceMap Technologies (Pty) Ltd &nbsp;·&nbsp;
         KwaZulu-Natal Department of Health Prototype<br>
         POPIA Compliant &nbsp;|&nbsp; NDoH Guidelines 2023 &nbsp;|&nbsp;
-        Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Registered<br>
+        Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Compliant<br>
         <span style='color:#1e3a5f;'>
             For clinical use only. Not a substitute for qualified medical judgement.
             All outputs must be reviewed by a licensed clinician.
