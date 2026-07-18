@@ -14,7 +14,6 @@ import html
 import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from engine import pk
 
 import yaml
 
@@ -180,7 +179,7 @@ def _internal_drug(d):
         entry["secondary_label"] = d["secondary_threshold_mg_L"].get("label", "secondary")
     if isinstance(d.get("intracellular_t_half_h"), dict):
         entry["intracellular_t_half"] = d["intracellular_t_half_h"]["value"]
-        entry["compartment"] = d["intracellular_t_half_h"].get("compartment", "Unknown")
+        entry["intracellular_compartment"] = d["intracellular_t_half_h"].get("compartment")
     if isinstance(d.get("activity_fraction_cutoff"), dict):
         entry["activity_fraction_cutoff"] = d["activity_fraction_cutoff"]["value"]
     return entry
@@ -932,14 +931,16 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
         tb_coinfection = st.checkbox("Active TB (On Rifampicin)",
-                                      help="UGT1A1/CYP3A4 inducer — reduces DTG half-life by ~54%")
+                                      help="CYP3A4 inducer — reduces DTG half-life by ~50%")
 
-        st_johns_wort = st.checkbox("Traditional Medicine (St. John's Wort)",
-                                        help="CYP450 pathway interaction")
-        african_potato = st.checkbox("Traditional Medicine (African Potato)",
+        traditional_meds = st.checkbox("Traditional Medicine (St. John's Wort / African Potato)",
                                         help="CYP450 pathway interaction")
 
-        renal_function = st.number_input("Kidney Function (eGFR, mL/min/1.73m²)", 0, 200, 90)
+        renal_function = st.selectbox("Kidney Function (eGFR)",
+            ["Normal (>90 mL/min)",
+             "Mild Impairment (60–89 mL/min)",
+             "Moderate Impairment (30–59 mL/min)",
+             "Severe Impairment (<30 mL/min)"])
 
         paediatric = st.checkbox("Paediatric Patient (Weight-Band Dosing)",
                                   help="Activates paediatric PK adjustment engine")
@@ -1002,37 +1003,38 @@ elif app_view == "Patient Assessment Dashboard":
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Traditional medicine
-        if st_johns_wort and drug == "Dolutegravir":
+        # Traditional medicine (single combined toggle; SJW multipliers applied)
+        if traditional_meds and drug == "Dolutegravir":
             ix = INTERACTIONS["sjw_dtg"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        if st_johns_wort and drug == "Efavirenz":
+        if traditional_meds and drug == "Efavirenz":
             ix = INTERACTIONS["sjw_efv"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        if african_potato and drug == "Dolutegravir":
-            ix = INTERACTIONS["african_potato_dtg"]
-            t_half *= ix["multiplier"]
-            applied.append((ix["display_name"], ix["display_desc"]))
-
-        if african_potato and drug == "Efavirenz":
-            ix = INTERACTIONS["african_potato_efv"]
-            t_half *= ix["multiplier"]
-            applied.append((ix["display_name"], ix["display_desc"]))
-
         # Renal impairment
-        # Scaling is disabled pending a source for the renally cleared fraction (methodology 5.5)
+        renal_factor = 1.0
+        if stats.get("renal_sensitive"):
+            rmul = INTERACTIONS["renal_tdf_3tc"]["multipliers"]
+            if "Moderate Impairment" in renal_function:
+                renal_factor = rmul["moderate"]
+            elif "Severe Impairment" in renal_function:
+                renal_factor = rmul["severe"]
+            elif "Mild Impairment" in renal_function:
+                renal_factor = rmul["mild"]
+            if renal_factor > 1.0:
+                t_half *= renal_factor
+                applied.append((INTERACTIONS["renal_tdf_3tc"]["display_name"],
+                                f"+{int((renal_factor - 1) * 100)}% TFV/3TC half-life"))
 
-        # Paediatric allometric adjustment
+        # Paediatric weight-band adjustment (linear W/W_ref)
         if paediatric:
-            if age_months is None or age_months >= 6:
-                pw = INTERACTIONS["paediatric_weight"]
-                weight_factor = (weight_kg / pw["weight_reference_kg"]) ** 0.25
-                t_half *= weight_factor
-                applied.append((pw["display_name"], f"Allometric factor {weight_factor:.2f}"))
+            pw = INTERACTIONS["paediatric_weight"]
+            weight_factor = max(pw["floor"], min(pw["cap"], weight_kg / pw["weight_reference_kg"]))
+            t_half *= weight_factor
+            applied.append((pw["display_name"], f"Weight factor {weight_factor:.2f}"))
 
         return t_half, applied
 
@@ -1046,23 +1048,14 @@ elif app_view == "Patient Assessment Dashboard":
         stats = pk_db.get(drug)
         if not stats:
             continue
+        # Drugs without an available curve (e.g. abacavir, methodology section 4.5)
+        # are not modelled: no concentration, no curve, no threshold-breach alert.
         if not stats.get("curve_available"):
             continue
-            
-        if paediatric and age_months is not None and age_months < 6:
-            continue
-
         adj_t_half, mods = calculate_adjusted_half_life(drug, stats)
         adjusted_halves[drug] = adj_t_half
-        
-        if stats.get("tier") == "A":
-            current_levels[drug], clamp_flag = pk.concentration_at(
-                hours_missed, stats["c_max"], adj_t_half, stats.get("lloq")
-            )
-        else:
-            k_e_plasma = math.log(2) / adj_t_half
-            current_levels[drug] = stats["c_max"] * math.exp(-k_e_plasma * hours_missed)
-
+        k_e = math.log(2) / adj_t_half
+        current_levels[drug] = stats["c_max"] * math.exp(-k_e * hours_missed)
         all_modifiers[drug] = mods
 
 
@@ -1092,7 +1085,7 @@ elif app_view == "Patient Assessment Dashboard":
         score += len(below_mic_drugs) * w["per_below_threshold_drug"]
         score += len(vulnerable_drugs) * w["per_vulnerable_drug"]
         if tb_coinfection:                        score += w["tb_coinfection"]
-        if st_johns_wort or african_potato:       score += w["traditional_meds"]
+        if traditional_meds:                      score += w["traditional_meds"]
         if viral_load > VL_BANDS["high_above"]:   score += w["viral_load_gt_1000"]
         if cd4_count < CD4_BANDS["severe_below"]: score += w["cd4_lt_200"]
         if paediatric:                            score += w["paediatric"]
@@ -1138,17 +1131,27 @@ elif app_view == "Patient Assessment Dashboard":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Assessment Coverage Banner ──
-    tier_b_drugs = [d for d in active_drugs if pk_db.get(d, {}).get("tier") == "B"]
-    if tier_b_drugs:
-        excluded_str = " and ".join(tier_b_drugs).lower()
-        total_components = len(active_drugs)
-        included_components = total_components - len(tier_b_drugs)
+    # ── Coverage disclosure (tier B components are not yet in the composite score) ──
+    scored_components = [d for d in active_drugs if "threshold_mg_L" in pk_db.get(d, {})]
+    unscored_components = [d for d in active_drugs if pk_db.get(d, {}).get("tier") == "B"]
+    partial_note = "Partial assessment" if unscored_components else ""
+
+    if unscored_components:
         st.markdown(f"""
-        <div class='alert-warning' style='margin-bottom:1rem;'>
-            <div style='font-weight:700; font-size:0.85rem;'>Partial Assessment Coverage ({included_components} of {total_components} components)</div>
-            <div style='font-size:0.78rem; margin-top:0.3rem;'>
-                {excluded_str.capitalize()} are modelled for exposure but do not contribute to the composite score pending the Stage 4 selection-pressure classification.
+        <div class='alert-warning' style='margin-bottom:0.9rem;'>
+            <div style='font-weight:700; font-size:0.82rem;'>
+               PARTIAL ASSESSMENT — not every regimen component is in the score
+            </div>
+            <div style='font-size:0.78rem; margin-top:0.3rem; line-height:1.6;'>
+                In the composite score:
+                <strong>{', '.join(scored_components) if scored_components else 'none'}</strong>
+                (tier A, plasma efficacy threshold).<br>
+                Not in the score:
+                <strong>{', '.join(unscored_components)}</strong> —
+                nucleos(t)ide prodrugs whose active moiety is intracellular. Their remaining
+                exposure is shown in the drug status panel as a percentage of steady state, but
+                no inhibitory quotient is computed (methodology &sect;3.4). The two-tier
+                selection-pressure model arrives in Stage 4.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1157,13 +1160,12 @@ elif app_view == "Patient Assessment Dashboard":
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
     with kpi1:
-        has_tier_b = len(tier_b_drugs) > 0
-        score_note = " &nbsp;·&nbsp; Partial assessment" if has_tier_b else ""
         st.markdown(f"""
         <div class='metric-card'>
             <h3>Resistance Risk Score</h3>
             <div class='metric-value' style='color:{risk_color};'>{risk_score}/100</div>
-            <div class='metric-delta' style='color:{risk_color};'>● {risk_label}{score_note}</div>
+            <div class='metric-delta' style='color:#f59e0b; font-size:0.68rem;'>{partial_note}</div>
+            <div class='metric-delta' style='color:{risk_color};'>● {risk_label}</div>
         </div>""", unsafe_allow_html=True)
 
     with kpi2:
@@ -1274,8 +1276,6 @@ elif app_view == "Patient Assessment Dashboard":
                 adj_t = adjusted_halves[drug]
                 k_e   = math.log(2) / adj_t
                 decay = stats["c_max"] * np.exp(-k_e * time_array)
-                if stats.get("tier") == "A" and stats.get("lloq"):
-                    decay = np.maximum(decay, stats["lloq"])
 
                 color = stats["color"]
 
@@ -1425,35 +1425,47 @@ elif app_view == "Patient Assessment Dashboard":
                     """, unsafe_allow_html=True)
                     continue
 
-                lvl = current_levels[drug]
                 adj_t = adjusted_halves[drug]
 
-                # Tier A drugs carry a threshold and get an above/below classification.
-                if "threshold_mg_L" in stats:
-                    mic = stats["threshold_mg_L"]
-                    pct = (lvl / mic) * 100
-                    if lvl >= mic:
-                        status_html = "<span class='status-stable'>ABOVE MIC</span>"
-                    elif lvl >= mic * 0.05:
-                        status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
-                    else:
-                        status_html = "<span class='status-critical'>CLEARED</span>"
-                    
-                    clamp_note = "<br><span style='color:#ef4444;'>below limit of quantification</span>" if lvl <= stats.get("lloq", -1) else ""
-                    threshold_line = f"MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage{clamp_note}"
+                # Tier B prodrug: report relative active-moiety exposure f(t), never an
+                # absolute concentration or inhibitory quotient (methodology section 3.4).
+                if "threshold_mg_L" not in stats:
+                    intra_t = stats.get("intracellular_t_half")
+                    f_t = math.exp(-math.log(2) / intra_t * hours_missed)
+                    moiety = stats.get("active_moiety", "active moiety")
+                    compartment = stats.get("intracellular_compartment", "")
+                    st.markdown(f"""
+                    <div class='metric-card' style='margin-bottom:0.6rem;'>
+                        <div style='display:flex; justify-content:space-between; align-items:center;
+                                    margin-bottom:0.5rem;'>
+                            <span class='drug-badge'>{drug}</span>
+                            <span class='status-warning'>PRODRUG — EXPOSURE ONLY</span>
+                        </div>
+                        <div style='font-size:0.72rem; color:#64748b;'>Active-moiety exposure remaining</div>
+                        <div style='font-size:1.3rem; font-weight:700; color:{stats["color"]};'>
+                            {f_t * 100:.1f}% of steady state
+                        </div>
+                        <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
+                            {moiety} &nbsp;·&nbsp; intracellular t½ {intra_t:.0f} h ({compartment})
+                        </div>
+                        <div style='font-size:0.7rem; color:#f59e0b; margin-top:0.3rem; line-height:1.4;'>
+                            No inhibitory quotient computed: the active moiety is intracellular
+                            with no plasma-comparable efficacy threshold (methodology &sect;3.4).
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    continue
+
+                # Tier A drug: plasma concentration and above/below classification.
+                lvl = current_levels[drug]
+                mic = stats["threshold_mg_L"]
+                pct = (lvl / mic) * 100
+                if lvl >= mic:
+                    status_html = "<span class='status-stable'>ABOVE MIC</span>"
+                elif lvl >= mic * 0.05:
+                    status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
                 else:
-                    # Tier B prodrug: relative exposure (section 3.4).
-                    status_html = "<span class='status-warning'>PRODRUG</span>"
-                    intracell_t_half = stats.get("intracellular_t_half", 48.0)
-                    compartment = stats.get("compartment", "Unknown")
-                    active_moiety = stats.get("active_moiety", "active moiety")
-                    k_e_intra = math.log(2) / intracell_t_half
-                    f_t = math.exp(-k_e_intra * hours_missed)
-                    threshold_line = (
-                        f"{f_t * 100:.1f}% of steady-state active-moiety exposure ({active_moiety})<br>"
-                        f"Intracellular t½: {intracell_t_half}h ({compartment})<br>"
-                        f"No inhibitory quotient is computed: no validated intracellular efficacy threshold exists in comparable units (&sect;3.4)."
-                    )
+                    status_html = "<span class='status-critical'>CLEARED</span>"
 
                 st.markdown(f"""
                 <div class='metric-card' style='margin-bottom:0.6rem;'>
@@ -1467,7 +1479,7 @@ elif app_view == "Patient Assessment Dashboard":
                         {lvl:.4f} mg/L
                     </div>
                     <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
-                        {threshold_line}
+                        MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage
                     </div>
                     <div style='font-size:0.72rem; color:#64748b;'>
                         Adj. t½: {adj_t:.1f}h &nbsp;·&nbsp; {stats["class"]}

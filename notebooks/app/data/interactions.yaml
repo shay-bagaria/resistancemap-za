@@ -12,116 +12,120 @@ interactions:
   - id: rifampicin_dtg
     trigger: rifampicin
     drug: Dolutegravir
-    multiplier: 0.46
+    multiplier: 0.50
     classification: A
     status: active
     methodology_section: "5.1"
-    source: "Rifampicin reduces DTG AUC ~54% via UGT1A1 (principal), UGT1A9 and CYP3A4 (<10%)."
+    source: "Rifampicin reduces DTG AUC ~54% via UGT1A1 (principal) and CYP3A4 (<10%)."
     derived_multiplier: 0.46
-    derivation: |
-      AUC ∝ 1/CL, and AUC_rif / AUC_control = 0.46 (54% reduction)
-      ⇒ CL_rif / CL_control = 1/0.46 = 2.174
-      t½ = ln(2)·V/CL, V assumed unchanged
-      ⇒ t½_rif = 14 h × 0.46 = 6.4 h
     note: >-
-      Section 5.1 derives 0.46 (-> 6.4 h) from the 54% AUC reduction and switches DTG
-      to twice-daily dosing on the plotted curve.
-    display_name: "Rifampicin UGT1A1/CYP3A4 Induction"
-    display_desc: "−54% DTG half-life"
-    alert: "Increase dolutegravir to 50 mg twice daily with rifampicin. Note: twice-daily dosing with rifampicin achieves AUC and trough approximately 18–33% above once-daily dosing without rifampicin."
+      v4.0 applies 0.50 (14 h -> 7.0 h). Section 5.1 derives 0.46 (-> 6.4 h) from
+      the 54% AUC reduction and also switches DTG to twice-daily dosing on the
+      plotted curve. Stage 3 makes both changes.
+    display_name: "Rifampicin CYP3A4 Induction"
+    display_desc: "−50% DTG half-life"
+    alert: "Increase dolutegravir to 50 mg twice daily with rifampicin."
 
   - id: rifampicin_efv
     trigger: rifampicin
     drug: Efavirenz
-    multiplier: 1.0
+    multiplier: 0.74
     classification: C
-    status: removed
+    status: pending_removal
     methodology_section: "5.2"
     source: "Not supported by South African data (Cohen et al., PMC3837290)."
     note: >-
       Section 5.2: SA data support no dose adjustment; CYP2B6 516G>T is the dominant
-      determinant of EFV exposure locally.
+      determinant of EFV exposure locally. Stage 3 removes this multiplier.
     display_name: "Rifampicin CYP3A4 Induction"
-    display_desc: "No adjustment (removed)"
-    alert: "South African data support use of efavirenz with rifampicin-based tuberculosis treatment without dose adjustment in that population. CYP2B6 516G>T, common locally, is a larger determinant of efavirenz exposure."
+    display_desc: "−26% EFV half-life"
+    alert: "No EFV dose adjustment for rifampicin in SA populations (informational)."
 
   - id: sjw_dtg
-    trigger: sjw
+    trigger: traditional_meds
     herb: "St John's Wort"
     drug: Dolutegravir
-    multiplier: 1.0
+    multiplier: 0.65
     classification: B
-    status: direction_only
+    status: pending_removal
     methodology_section: "5.3"
     source: "Direction established (hyperforin induces CYP3A4/P-gp); magnitude unsourced — TODO."
-    note: "Section 5.3: direction only, magnitude not sourced."
-    display_name: "St John's Wort CYP450"
-    display_desc: "Direction of effect only"
+    note: "Section 5.3: direction only, magnitude not sourced. Stage 3 shows direction, not a percentage."
+    display_name: "Traditional Medicine CYP450"
+    display_desc: "−35% DTG half-life"
     alert: "Counsel on St John's Wort interaction (direction of effect only)."
 
   - id: sjw_efv
-    trigger: sjw
+    trigger: traditional_meds
     herb: "St John's Wort"
     drug: Efavirenz
-    multiplier: 1.0
+    multiplier: 0.70
     classification: B
-    status: direction_only
+    status: pending_removal
     methodology_section: "5.3"
     source: "Direction established (hyperforin induces CYP3A4/P-gp); magnitude unsourced — TODO."
-    note: "Section 5.3: direction only, magnitude not sourced."
-    display_name: "St John's Wort CYP450"
-    display_desc: "Direction of effect only"
+    note: "Section 5.3: direction only, magnitude not sourced. Stage 3 shows direction, not a percentage."
+    display_name: "Traditional Medicine CYP450"
+    display_desc: "−30% EFV half-life"
     alert: "Counsel on St John's Wort interaction (direction of effect only)."
 
+  # African Potato currently shares the St John's Wort multiplier through a single
+  # combined "traditional medicine" toggle in v4.0. Recorded here for completeness;
+  # not applied separately (applied: false) so the arithmetic is unchanged.
   - id: african_potato_dtg
-    trigger: african_potato
+    trigger: traditional_meds
     herb: "African Potato (Hypoxis hemerocallidea)"
     drug: Dolutegravir
-    multiplier: 1.0
-    applied: true
+    multiplier: 0.65
+    shares_multiplier_with: sjw_dtg
+    applied: false
     classification: C
-    status: active
+    status: pending_removal
     methodology_section: "5.4"
     source: "Evidence thin, largely in vitro, not consistently supporting induction."
-    note: "Section 5.4: multiplier 1.0 (no modelled effect)."
-    display_name: "African Potato CYP450"
-    display_desc: "No modelled effect"
-    alert: "Counsel on African Potato interaction. Note: evidence is thinner than for St John's Wort, is largely in vitro, and does not consistently support induction, with some findings pointing towards inhibition."
+    note: "Section 5.4: shares the SJW multiplier in v4.0. Stage 3 sets to 1.0 (no modelled effect) and keeps a counselling prompt."
+    display_name: "Traditional Medicine CYP450"
+    display_desc: "−35% DTG half-life"
 
   - id: african_potato_efv
-    trigger: african_potato
+    trigger: traditional_meds
     herb: "African Potato (Hypoxis hemerocallidea)"
     drug: Efavirenz
-    multiplier: 1.0
-    applied: true
+    multiplier: 0.70
+    shares_multiplier_with: sjw_efv
+    applied: false
     classification: C
-    status: active
+    status: pending_removal
     methodology_section: "5.4"
     source: "Evidence thin, largely in vitro, not consistently supporting induction."
-    note: "Section 5.4: multiplier 1.0 (no modelled effect)."
-    display_name: "African Potato CYP450"
-    display_desc: "No modelled effect"
-    alert: "Counsel on African Potato interaction. Note: evidence is thinner than for St John's Wort, is largely in vitro, and does not consistently support induction, with some findings pointing towards inhibition."
+    note: "Section 5.4: shares the SJW multiplier in v4.0. Stage 3 sets to 1.0 (no modelled effect) and keeps a counselling prompt."
+    display_name: "Traditional Medicine CYP450"
+    display_desc: "−30% EFV half-life"
 
   - id: renal_tdf_3tc
     trigger: renal
     drugs: [Tenofovir, Lamivudine]
-    eGFR_reference: 90
+    multipliers:
+      mild: 1.15        # Mild Impairment (60-89 mL/min)
+      moderate: 1.40    # Moderate Impairment (30-59 mL/min)
+      severe: 1.85      # Severe Impairment (<30 mL/min)
     classification: C
-    status: active
+    status: pending_removal
     methodology_section: "5.5"
-    source: "Clearance scaling: t½_patient ≈ t½_normal × (eGFR_reference / eGFR_patient)"
-    note: "Section 5.5: replaced by eGFR scaling (t-half x eGFR_ref/eGFR). Scaling is disabled until a source for the renally cleared fraction is supplied."
+    source: "No traced source for the fixed per-category coefficients."
+    note: "Section 5.5: replaced by eGFR scaling (t-half x eGFR_ref/eGFR) with a per-drug renally-cleared fraction in Stage 3."
     display_name: "Renal Clearance Delay"
 
   - id: paediatric_weight
     trigger: paediatric
     scope: all
-    model: allometric
-    weight_reference_kg: 70
+    model: linear
+    weight_reference_kg: 35
+    floor: 0.6
+    cap: 1.0
     classification: B
-    status: active
+    status: pending_removal
     methodology_section: "5.6"
-    source: "Allometric: (W/70)^0.25"
+    source: "Linear W/35, floored at 0.6, capped at 1.0. No paediatric-PK basis."
     note: "Section 5.6: replaced by allometric (W/70)^0.25 in Stage 3."
     display_name: "Paediatric Weight-Band"
