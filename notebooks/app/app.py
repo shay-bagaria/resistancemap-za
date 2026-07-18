@@ -61,7 +61,7 @@ else:
 st.set_page_config(
     page_title="ResistanceMap ZA OS | Enterprise CDSS",
     layout="wide",
-    page_icon="",
+    page_icon=":material/biotech:",
     initial_sidebar_state="expanded"
 )
 
@@ -598,17 +598,11 @@ elif app_view == "Understanding Your Results":
          "If you use <strong>traditional medicines</strong> like African Potato or St. John's Wort, it warns that these can speed up "
          "how fast your ARVs leave your body. These alerts help your clinic team make the right adjustments."),
 
-        ("AI Adherence Risk",
+        ("Adherence Risk",
          "Predicts how likely a patient is to miss future doses",
          "This looks at real-life challenges: <strong>How far do you live from the clinic? Do you have transport? "
          "Is there a taxi strike?</strong> It combines these into a risk score. If your risk is high, the system suggests "
          "a community health worker visit or an extra phone reminder to help you stay on track."),
-
-        ("CFO Economics",
-         "Shows the cost impact of drug resistance on the health system",
-         "When HIV becomes resistant to first-line ARVs, patients must switch to second-line or third-line drugs that cost "
-         "much more money. This tab shows health officials how much money can be saved by catching resistance early. "
-         "It proves that prevention is cheaper than cure."),
 
         ("Audit & Compliance",
          "A complete record of every check the system performs",
@@ -704,7 +698,6 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Logo Block ──
         st.markdown("""
         <div style='text-align:center; padding: 0.5rem 0 1rem 0;'>
-            <div style='font-size:2rem;'></div>
             <div style='font-size:1.1rem; font-weight:700; color:#e2e8f0; letter-spacing:0.05em;'>
                 ResistanceMap ZA
             </div>
@@ -948,7 +941,6 @@ elif app_view == "Patient Assessment Dashboard":
     st.markdown(f"""
     <div class='top-header'>
         <div style='display:flex; align-items:center; gap:1rem;'>
-            <div style='font-size:1.8rem;'></div>
             <div>
                 <div style='font-size:1.25rem; font-weight:700; color:#e2e8f0;
                             letter-spacing:0.02em;'>
@@ -1048,12 +1040,11 @@ elif app_view == "Patient Assessment Dashboard":
     # 5. TABBED INTERFACE — ENTERPRISE MODULES
     # ============================================================
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "PK Decay Curves",
         "Mutation & Resistance",
         "Clinical Directives",
-        "AI Adherence Risk",
-        "CFO Economics",
+        "Adherence Risk",
         "Audit & Compliance"
     ])
 
@@ -1638,7 +1629,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Clinical Guideline Reference Index</p>",
                     unsafe_allow_html=True)
 
-        st.markdown("""
+        st.markdown(f"""
         <table class='styled-table'>
             <thead>
                 <tr>
@@ -1684,7 +1675,7 @@ elif app_view == "Patient Assessment Dashboard":
         """, unsafe_allow_html=True)
 
     # ────────────────────────────────────────────────────────────
-    # TAB 4: AI ADHERENCE RISK ENGINE
+    # TAB 4: ADHERENCE RISK ENGINE
     # ────────────────────────────────────────────────────────────
     with tab4:
         st.markdown("<p class='section-header'>Socio-Economic Predictive AI — Defaulter Risk Model</p>",
@@ -1869,180 +1860,9 @@ elif app_view == "Patient Assessment Dashboard":
                 """, unsafe_allow_html=True)
 
     # ────────────────────────────────────────────────────────────
-    # TAB 5: CFO HEALTH ECONOMICS DASHBOARD
+    # TAB 5: AUDIT LOG & COMPLIANCE
     # ────────────────────────────────────────────────────────────
     with tab5:
-        st.markdown("<p class='section-header'>Health Economics Intelligence — CFO Dashboard</p>",
-                    unsafe_allow_html=True)
-
-        # ── Cost Modelling Inputs ──
-        col_cfo_in, col_cfo_out = st.columns([1, 2])
-
-        with col_cfo_in:
-            st.markdown("""
-            <div class='metric-card'>
-                <div style='font-size:0.72rem; color:#3b82f6; font-weight:600;
-                            text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.8rem;'>
-                    Economic Model Parameters
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            n_patients    = st.number_input("Patient Population on ART", 100, 50000, 5000)
-            default_rate  = st.slider("Current Default Rate (%)", 1, 40, 18)
-            vl_failure_rate = st.slider("Virological Failure Rate (%)", 1, 30, 12)
-
-            first_line_cost  = st.number_input("First-Line Regimen Cost (ZAR/patient/year)",
-                                                500, 5000, 1200)
-            second_line_cost = st.number_input("Second-Line Regimen Cost (ZAR/patient/year)",
-                                                1000, 20000, 4500)
-            third_line_cost  = st.number_input("Third-Line Regimen Cost (ZAR/patient/year)",
-                                                5000, 200000, 85000)
-
-            system_reduction = st.slider("Estimated CDSS Resistance Reduction (%)", 5, 60, 35)
-
-        with col_cfo_out:
-            # ── Economic Calculations ──
-            pts_failing    = int(n_patients * vl_failure_rate / 100)
-            pts_on_2nd     = int(pts_failing * 0.7)
-            pts_on_3rd     = int(pts_failing * 0.12)
-
-            current_drug_spend = (
-                (n_patients - pts_failing) * first_line_cost +
-                pts_on_2nd * second_line_cost +
-                pts_on_3rd * third_line_cost
-            )
-
-            # Post-CDSS savings
-            reduction_factor = system_reduction / 100
-            pts_failing_post = int(pts_failing * (1 - reduction_factor))
-            pts_on_3rd_post  = int(pts_on_3rd  * (1 - reduction_factor * 1.4))
-
-            post_drug_spend = (
-                (n_patients - pts_failing_post) * first_line_cost +
-                int(pts_failing_post * 0.7) * second_line_cost +
-                pts_on_3rd_post * third_line_cost
-            )
-
-            annual_saving    = current_drug_spend - post_drug_spend
-            licence_fee      = 1_000_000
-            net_saving       = annual_saving - licence_fee
-            roi_pct          = (net_saving / licence_fee) * 100
-
-            # ── KPI Row ──
-            e1, e2, e3, e4 = st.columns(4)
-            econ_cards = [
-                ("Annual Drug Spend (Pre-CDSS)", f"R {current_drug_spend:,.0f}", "#ef4444"),
-                ("Annual Drug Spend (Post-CDSS)", f"R {post_drug_spend:,.0f}", "#10b981"),
-                ("Annual Cost Saving", f"R {annual_saving:,.0f}", "#3b82f6"),
-                (f"ROI on R1M Licence", f"{roi_pct:.0f}%", "#f59e0b")
-            ]
-            for col, (label, value, color) in zip([e1, e2, e3, e4], econ_cards):
-                with col:
-                    st.markdown(f"""
-                    <div class='metric-card' style='text-align:center;'>
-                        <h3 style='text-align:center;'>{label}</h3>
-                        <div class='metric-value' style='color:{color}; font-size:1.3rem;'>
-                            {value}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            # ── Waterfall Chart ──
-            fig_wf = go.Figure(go.Waterfall(
-                name="Cost Bridge",
-                orientation="v",
-                measure=["absolute", "relative", "relative", "relative", "total"],
-                x=["Baseline\nDrug Spend", "1st→2nd Line\nPrevention",
-                   "3rd-Line\nPrevention", "Licence\nFee", "Net Annual\nPosition"],
-                textposition="outside",
-                text=[f"R {current_drug_spend/1e6:.1f}M",
-                      f"-R {(current_drug_spend-post_drug_spend)*0.4/1e6:.1f}M",
-                      f"-R {(current_drug_spend-post_drug_spend)*0.6/1e6:.1f}M",
-                      f"+R 1.0M",
-                      f"R {net_saving/1e6:.1f}M"],
-                y=[current_drug_spend,
-                   -(current_drug_spend - post_drug_spend) * 0.4,
-                   -(current_drug_spend - post_drug_spend) * 0.6,
-                   licence_fee,
-                   0],
-                connector={"line": {"color": "#1e3a5f"}},
-                increasing={"marker": {"color": "#ef4444"}},
-                decreasing={"marker": {"color": "#10b981"}},
-                totals={"marker": {"color": "#3b82f6"}},
-            ))
-            fig_wf.update_layout(
-                title=dict(text="Financial Impact Waterfall — Annual Cost Bridge",
-                           font=dict(color='#94a3b8', size=13)),
-                plot_bgcolor="#0a0e1a",
-                paper_bgcolor="#0d1b2e",
-                font=dict(family="Inter", color="#94a3b8", size=11),
-                yaxis=dict(gridcolor="#0f2237", title="ZAR (Rands)"),
-                xaxis=dict(gridcolor="#0f2237"),
-                height=320,
-                margin=dict(l=0, r=0, t=40, b=0)
-            )
-            st.plotly_chart(fig_wf, width="stretch")
-
-        # ── Metrics Table ──
-        st.markdown("<p class='section-header'>Value-per-Metric Breakdown</p>",
-                    unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <table class='styled-table'>
-            <thead>
-                <tr>
-                    <th>Performance Metric</th>
-                    <th>Baseline</th>
-                    <th>Post-CDSS</th>
-                    <th>Financial Implication</th>
-                    <th>NHI Alignment</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Patients on Third-Line Therapy</td>
-                    <td style='color:#ef4444;'>{pts_on_3rd:,}</td>
-                    <td style='color:#10b981;'>{pts_on_3rd_post:,}</td>
-                    <td>Saves R {(pts_on_3rd - pts_on_3rd_post) * third_line_cost:,.0f}/yr</td>
-                    <td><span class='status-stable'>HIGH VALUE</span></td>
-                </tr>
-                <tr>
-                    <td>Virological Failure Events</td>
-                    <td style='color:#ef4444;'>{pts_failing:,}</td>
-                    <td style='color:#10b981;'>{pts_failing_post:,}</td>
-                    <td>Prevents {pts_failing - pts_failing_post:,} treatment switches</td>
-                    <td><span class='status-stable'>HIGH VALUE</span></td>
-                </tr>
-                <tr>
-                    <td>Medication Wastage (stockout)</td>
-                    <td style='color:#f59e0b;'>Untracked</td>
-                    <td style='color:#10b981;'>Auto-rerouted</td>
-                    <td>Estimated R {int(n_patients * 0.03 * first_line_cost):,}/yr saved</td>
-                    <td><span class='status-stable'>MEDIUM</span></td>
-                </tr>
-                <tr>
-                    <td>Medical Negligence Exposure</td>
-                    <td style='color:#ef4444;'>Unaudited</td>
-                    <td style='color:#10b981;'>Full audit trail</td>
-                    <td>Litigation risk reduction (unquantified)</td>
-                    <td><span class='status-stable'>CRITICAL</span></td>
-                </tr>
-                <tr>
-                    <td>Resistance Reduction Rate</td>
-                    <td style='color:#f59e0b;'>0%</td>
-                    <td style='color:#10b981;'>{system_reduction}%</td>
-                    <td>ROI: <strong style='color:#3b82f6;'>{roi_pct:.0f}%</strong> on R1M licence</td>
-                    <td><span class='status-stable'>CORE</span></td>
-                </tr>
-            </tbody>
-        </table>
-        """, unsafe_allow_html=True)
-
-    # ────────────────────────────────────────────────────────────
-    # TAB 6: AUDIT LOG & COMPLIANCE
-    # ────────────────────────────────────────────────────────────
-    with tab6:
         st.markdown("<p class='section-header'>Session Audit Trail</p>",
                     unsafe_allow_html=True)
 
@@ -2104,7 +1924,7 @@ elif app_view == "Patient Assessment Dashboard":
 
         audit_events.append({
             "timestamp": (now - datetime.timedelta(seconds=7)).strftime("%Y-%m-%d %H:%M:%S"),
-            "event":     "AI ADHERENCE SCORE COMPUTED",
+            "event":     "ADHERENCE SCORE COMPUTED",
             "detail":    f"Default risk: {adherence_risk:.0f}% | Category: {ar_label}",
             "level":     "INFO",
             "hash":      f"SHA256:{abs(hash(str(adherence_risk))):#x}"[:24]
@@ -2120,8 +1940,7 @@ elif app_view == "Patient Assessment Dashboard":
         rows_html = ""
         for ev in audit_events:
             color = level_colors.get(ev["level"], "#94a3b8")
-            rows_html += f"""
-            <tr>
+            rows_html += f"""<tr>
                 <td style='font-family:monospace; font-size:0.72rem; color:#64748b;'>
                     {ev["timestamp"]}
                 </td>
@@ -2141,8 +1960,7 @@ elif app_view == "Patient Assessment Dashboard":
                 <td style='font-family:monospace; font-size:0.65rem; color:#334155;'>
                     {ev["hash"]}
                 </td>
-            </tr>
-            """
+            </tr>"""
 
         st.markdown(f"""
         <table class='styled-table'>
@@ -2229,14 +2047,14 @@ Traditional Medicine: {"YES – CYP450 interaction warning" if traditional_meds 
 Renal Status: {renal_function}
 Paediatric Protocol: {"YES – Weight-band dosing active" if paediatric else "No"}
 
-AI ADHERENCE RISK
------------------
+ADHERENCE RISK
+--------------
 Default Risk Score: {adherence_risk:.0f}%
 Risk Category: {ar_label}
 Recommended Action: {ar_action}
 
-ECONOMICS
----------
+LABORATORY VALUES
+-----------------
 Viral Load: {viral_load:,} copies/mL
 CD4 Count: {cd4_count} cells/μL
 
