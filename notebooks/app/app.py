@@ -1966,23 +1966,42 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
 
-        # ── All Clear ──
+        # ── No directives ──
+        # Never render a green all-clear while any regimen component is outside the
+        # score: silence would read as reassurance the assessment cannot support.
         if directives_fired == 0:
-            st.markdown("""
-            <div class='alert-success'>
-                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   SYSTEM CLEAR — NO ACTIVE CLINICAL DIRECTIVES
+            if unscored_components:
+                st.markdown(f"""
+                <div class='alert-info'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       NO DIRECTIVES FROM MODELLED COMPONENTS — ASSESSMENT PARTIAL
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        No directive fired for the components currently in the model. This is
+                        <strong>not an all-clear</strong>:
+                        <strong>{', '.join(unscored_components)}</strong>
+                        {'is' if len(unscored_components) == 1 else 'are'} outside the score
+                        (nucleos(t)ide prodrug — intracellular anabolite, no plasma-comparable
+                        threshold; methodology &sect;3.4). Interpret the tier B exposure percentages
+                        in the drug status panel alongside this.<br>
+                       <strong>Routine Action:</strong> Continue current regimen; confirm 3-monthly
+                        pharmacy collection.
+                    </div>
                 </div>
-                <div style='font-size:0.82rem; line-height:1.7;'>
-                    All pharmacokinetic parameters are within therapeutic range.
-                    No comorbidity interactions detected. Patient appears adherent.
-                    Next scheduled viral load review as per routine NDoH monitoring schedule.
-                    <br><br>
-                   <strong>Routine Action:</strong> Continue current regimen.
-                    Confirm 3-monthly pharmacy collection. Record in the facility register.
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class='alert-success'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       NO ACTIVE CLINICAL DIRECTIVES
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        Every regimen component is modelled and none triggered a directive.<br>
+                       <strong>Routine Action:</strong> Continue current regimen.
+                        Confirm 3-monthly pharmacy collection. Record in the facility register.
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
         # ── Protocol Reference Table ──
         st.markdown("<p class='section-header'>Clinical Guideline Reference Index</p>",
