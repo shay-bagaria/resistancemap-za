@@ -174,16 +174,40 @@ Status: removed. South African data support use of efavirenz with rifampicin-bas
 Multiplier: 1.0. Status: direction_only.
 
 ### 5.4 African Potato (Hypoxis hemerocallidea)
-Multiplier: 1.0. Status: active (no modelled effect). Evidence is largely in vitro and does not consistently support induction.
+Multiplier: 1.0. Status: `no_effect` (no modelled effect). Separate input from St John's Wort. Evidence is largely in vitro and does not consistently support induction (some findings point to inhibition). A counselling prompt is retained.
 
 ### 5.5 Renal Function
-Renal option taken: Implemented eGFR scaling (t½_patient ≈ t½_normal × (eGFR_reference / eGFR_patient) with eGFR_reference = 90), but scaling is explicitly disabled by assuming complete renal clearance until the fraction_renally_cleared term is sourced.
+Renal option taken: **(a) disable scaling pending an unsourced input.** The fixed per-category multipliers are removed and the input is a numeric eGFR. The eGFR-scaling formula t½_patient ≈ t½_normal × (90 / eGFR_patient) is recorded in `interactions.yaml` but `scaling_enabled: false`, because the per-drug `fraction_renally_cleared` term is unsourced (marked TODO — UNVERIFIED). Renal therefore does **not** modify the half-life or the resistance model; it is presented as a standalone accumulation-nephrotoxicity **safety** alert (fires at eGFR < 60), which is the physiologically relevant concern for tenofovir.
 
 ### 5.6 Paediatric Scaling
-Allometric scaling: t½_child = t½_adult × (W / 70) ** 0.25. Model not applicable below six months.
+Allometric scaling: t½_child = t½_adult × (W / 70) ** 0.25 (0.68 at 15 kg, vs the v4.0 linear 0.43). Below `curve_min_age_months` (6) the allometric model is not applicable (UGT1A1 maturation) and the **decay curve is suppressed**. Implementation note / deviation: the WHO weight-band **dose** lookup is retained below six months (it explicitly doses infants from four weeks — e.g. 5 mg at 3–<6 kg, 10 mg at 6–<10 kg for 4 weeks to <6 months per IMPAACT P1093); suppressing guideline dosing for infants would be a safety regression, so only the modelled curve is suppressed, not the dose. Flagged for reviewer confirmation.
 
 ## 17. Correction Table
 
-| Original Issue / Row | Correction Applied | Commit Hash / Reference |
-|---|---|---|
-| Stage 3 updates (various) | §5.1-5.6 updates implemented | (Current commit) |
+Maps the methodology §17 corrections to the commit that addressed each. Stages 4–7 items are pending.
+
+| # | Item | Stage | Commit |
+|---|---|---|---|
+| 1 | Paediatric DTG bands (WHO 5/15/20/25/30; age split) | 1, 1b | 97b121d, d8505a4 |
+| 2 | DTG threshold 0.50 → 0.064 mg/L PA-IC90 | 1 | 97b121d |
+| 3 | NRTI compartment: plasma → intracellular anabolite (tier B) | 2, 3 | eba20f6, 776fb9c |
+| 4 | Mutation probability (fabricated %) removed | 1 | 97b121d |
+| 5 | Audit hash: real SHA-256 chain | 1 | 97b121d |
+| 6 | Efavirenz threshold 0.51 → 1.0 mg/L | 1 | 97b121d |
+| 7 | Risk direction (monotherapy = highest) | 4 | pending |
+| 8 | Rifampicin mechanism → UGT1A1 principal | 3 | 776fb9c |
+| 9 | DTG dose-doubling applied to the curve (BD) | 3 | 776fb9c |
+| 10 | Herbals separated (SJW / African Potato) | 3 | 776fb9c |
+| 11 | Hypoxis FBC-on-TDF advice removed | 1b | d8505a4 |
+| 12 | Paediatric scaling linear → allometric ^0.25 | 3 | 776fb9c |
+| 13 | MIC terminology → PA-IC90 / threshold (key rename) | 1b, 6 | d8505a4, pending |
+| 14 | Genetic barrier in mutation index | 4 | pending |
+| 15 | Adherence model → support-needs framing | 5 | pending |
+| 16 | Efavirenz–rifampicin 0.74 multiplier removed | 3 | 776fb9c |
+| 17 | Renal fixed multipliers → numeric eGFR (scaling disabled) | 3 | 776fb9c |
+| 18 | Timestamps → Africa/Johannesburg, store UTC | 1 | 97b121d |
+| 19 | Log axis clamped at LLOQ | 3 | 776fb9c |
+| 20 | Resistance-window shading (0.85×–1.3×) removed | 7 | pending |
+| 21 | HTML injection escaped (html.escape) | 1 | 97b121d |
+| 22 | Visitor counter removed | 1 | 97b121d |
+| 23 | Unimplemented integration claims removed | 1 | 97b121d |
