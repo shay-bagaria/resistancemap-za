@@ -61,7 +61,7 @@ else:
 st.set_page_config(
     page_title="ResistanceMap ZA OS | Enterprise CDSS",
     layout="wide",
-    page_icon="🧬",
+    page_icon="",
     initial_sidebar_state="expanded"
 )
 
@@ -403,7 +403,7 @@ if app_view == "About ResistanceMap ZA":
     <div style='background: linear-gradient(135deg, #0d1b2e 0%, #0d2542 100%); 
                 border: 1px solid #1e3a5f; border-radius: 12px; padding: 2rem; margin-bottom: 2rem;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.4); text-align: center;'>
-        <h1 style='font-size: 2.5rem; font-weight: 700; color: #e2e8f0; margin: 0;'>🧬 ResistanceMap ZA</h1>
+        <h1 style='font-size: 2.5rem; font-weight: 700; color: #e2e8f0; margin: 0;'>ResistanceMap ZA</h1>
         <p style='font-size: 1.1rem; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 0.5rem;'>
             Molecular Epidemiology & Pharmacokinetic Surveillance Engine
         </p>
@@ -425,7 +425,7 @@ if app_view == "About ResistanceMap ZA":
                         letter-spacing: 0.15em; font-weight: 600;'>Total Site Visitors</div>
             <div style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0;
                         margin-top: 0.3rem; letter-spacing: 0.05em;'>
-                🌍 {visitor_count:,}
+               {visitor_count:,}
             </div>
             <div style='font-size: 0.65rem; color: #475569; margin-top: 0.3rem;'>
                 Healthcare professionals &amp; patients across South Africa
@@ -438,7 +438,7 @@ if app_view == "About ResistanceMap ZA":
     with col1:
         st.markdown("""
         <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>🔍 What is ResistanceMap ZA?</h3>
+            <h3 style='color: #3b82f6; font-size: 0.9rem;'>What is ResistanceMap ZA?</h3>
             <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
                 It is an advanced Clinical Decision Support System (CDSS) that tracks how HIV mutations cluster in different communities. When patients miss treatment erratically, sub-inhibitory windows select for drug-resistant variants. This platform models those drops to flag resistance patterns before they spread.
             </p>
@@ -447,7 +447,7 @@ if app_view == "About ResistanceMap ZA":
     with col2:
         st.markdown("""
         <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>💡 Why is it useful?</h3>
+            <h3 style='color: #3b82f6; font-size: 0.9rem;'>Why is it useful?</h3>
             <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
                 With South Africa deploying the National Health Insurance (NHI) framework, therapeutic failure creates major fiscal challenges. Moving patients onto specialized third-line therapies escalates costs drastically. By predicting resistance hotspots, resource distribution can be optimized accurately.
             </p>
@@ -456,7 +456,7 @@ if app_view == "About ResistanceMap ZA":
     with col3:
         st.markdown("""
         <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>👥 Who is it for?</h3>
+            <h3 style='color: #3b82f6; font-size: 0.9rem;'>Who is it for?</h3>
             <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
                 Built for frontline clinical professionals, health system programme planners, and medical researchers. It bridges the gap between raw genomic sequence data (NCBI GenBank / Stanford HIVdb) and concrete local diagnostic support protocols.
             </p>
@@ -480,8 +480,8 @@ if app_view == "About ResistanceMap ZA":
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color: #475569; line-height:2;'>
         ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Open Source Public Health System Framework<br>
-        Licensor: ResistanceMap Technologies (Pty) Ltd &nbsp;·&nbsp; sbagaria2009@gmail.com<br>
-        POPIA Compliant &nbsp;|&nbsp; NDoH Guidelines 2023 &nbsp;|&nbsp; Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Compliant
+        Contact: sbagaria2009@gmail.com<br>
+        Prototype for educational and research use only. Not an approved medical device.
     </div>
     """, unsafe_allow_html=True)
 
@@ -495,7 +495,7 @@ elif app_view == "Understanding Your Results":
                 border: 1px solid #1e3a5f; border-radius: 12px; padding: 2rem; margin-bottom: 2rem;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.4); text-align: center;'>
         <h1 style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0; margin: 0;'>
-            📖 Understanding Your Results
+           Understanding Your Results
         </h1>
         <p style='font-size: 1rem; color: #10b981; margin-top: 0.5rem; font-weight: 500;'>
             A plain-language guide written for patients living with HIV
@@ -508,7 +508,7 @@ elif app_view == "Understanding Your Results":
     """, unsafe_allow_html=True)
 
     # ── Section 1: What is this tool? ──
-    st.markdown("<p class='section-header'>💊 What is ResistanceMap ZA?</p>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>What is ResistanceMap ZA?</p>", unsafe_allow_html=True)
     st.markdown("""
     <div class='metric-card'>
         <p style='font-size: 0.92rem; color: #cbd5e1; line-height: 1.85;'>
@@ -524,37 +524,37 @@ elif app_view == "Understanding Your Results":
     """, unsafe_allow_html=True)
 
     # ── Section 2: The Dashboard Numbers ──
-    st.markdown("<p class='section-header'>📊 What Do the Numbers on the Dashboard Mean?</p>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>What Do the Numbers on the Dashboard Mean?</p>", unsafe_allow_html=True)
 
     guide_items = [
-        ("🔴 Resistance Risk Score (0–100)",
+        ("Resistance Risk Score (0–100)",
          "This is like a warning light for your treatment.",
          "It combines how long since your last dose, how much medicine is left in your blood, and other health factors. "
          "<strong>Lower is better.</strong> A score under 40 means things look stable. Above 70 means your doctor needs to act quickly.",
          "The system adds points for each risk factor — missed days, low drug levels, TB treatment, kidney problems, etc. "
          "The more risk factors, the higher the score."),
 
-        ("💊 Drugs Below MIC",
+        ("Drugs Below MIC",
          "MIC stands for 'Minimum Inhibitory Concentration' — the lowest amount of medicine needed to stop the virus.",
          "If a drug drops <strong>below MIC</strong>, there is not enough medicine in your blood to fight HIV properly. "
          "This is when the virus can start changing and becoming resistant. "
          "<strong>0 drugs below MIC = good. Any number above 0 = your doctor should look at this.</strong>",
          "Your blood drug level is compared to the known minimum needed. If you've missed doses, drugs with short half-lives (like Lamivudine) drop below MIC first."),
 
-        ("📅 Days Defaulted",
+        ("Days Defaulted",
          "This is simply how many days since you last took your medication.",
          "<strong>0 days = you took your pills today.</strong> Every extra day without pills means the medicine in your blood is dropping. "
          "After a few days, some drugs will have completely left your system.",
          "Your doctor or pharmacy records show when you last collected your pills. The system uses this to calculate how much drug is left in your body."),
 
-        ("🧪 Viral Load",
+        ("Viral Load",
          "This blood test counts how much HIV is in your blood.",
          "<strong>Undetectable (below 50 copies/mL) = excellent.</strong> It means your treatment is working well. "
          "Above 1,000 copies/mL means the virus may be growing because the treatment is struggling. "
          "Your doctor may need to check for resistance.",
          "Viral load is measured from a blood sample sent to the NHLS laboratory. Results are reported in copies per millilitre of blood."),
 
-        ("🛡️ CD4 Count",
+        ("CD4 Count",
          "CD4 cells are the soldiers of your immune system that fight infections.",
          "<strong>Above 500 = healthy immune system.</strong> Between 200–350 = your immune system needs support. "
          "<strong>Below 200 = your immune system is very weak</strong> and you're at risk for serious infections like TB or pneumonia.",
@@ -576,41 +576,41 @@ elif app_view == "Understanding Your Results":
         """, unsafe_allow_html=True)
 
     # ── Section 3: The Tabs ──
-    st.markdown("<p class='section-header'>📋 What Are the Different Tabs?</p>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>What Are the Different Tabs?</p>", unsafe_allow_html=True)
 
     tabs_guide = [
-        ("📈 PK Decay Curves",
+        ("PK Decay Curves",
          "Shows how fast each medicine leaves your body after a missed dose",
          "Think of it like a fuel gauge for each of your ARV drugs. The coloured lines show each drug's level dropping over time. "
          "When a line crosses below the dotted line (MIC), that drug is no longer protecting you. "
          "Drugs with a long 'half-life' (like Efavirenz) stay in your body longer, but this can actually be dangerous — "
          "the virus can start to 'learn' to fight a low dose of the drug."),
 
-        ("🧬 Mutation & Resistance",
+        ("Mutation & Resistance",
          "Shows which genetic changes might happen if drug levels drop too low",
          "HIV makes copies of itself very quickly, and sometimes those copies have small mistakes called mutations. "
          "Some mutations make the virus resistant to your medicine. For example, <strong>M184V</strong> makes Lamivudine less effective, "
          "and <strong>K65R</strong> does the same to Tenofovir. This tab shows how likely these mutations are based on your current drug levels."),
 
-        ("⚕️ Clinical Directives",
+        ("Clinical Directives",
          "Alerts and instructions for your healthcare team",
          "If you're also being treated for <strong>TB</strong>, the system warns your doctor to double the Dolutegravir dose. "
          "If you use <strong>traditional medicines</strong> like African Potato or St. John's Wort, it warns that these can speed up "
          "how fast your ARVs leave your body. These alerts help your clinic team make the right adjustments."),
 
-        ("🤖 AI Adherence Risk",
+        ("AI Adherence Risk",
          "Predicts how likely a patient is to miss future doses",
          "This looks at real-life challenges: <strong>How far do you live from the clinic? Do you have transport? "
          "Is there a taxi strike?</strong> It combines these into a risk score. If your risk is high, the system suggests "
          "a community health worker visit or an extra phone reminder to help you stay on track."),
 
-        ("💰 CFO Economics",
+        ("CFO Economics",
          "Shows the cost impact of drug resistance on the health system",
          "When HIV becomes resistant to first-line ARVs, patients must switch to second-line or third-line drugs that cost "
          "much more money. This tab shows health officials how much money can be saved by catching resistance early. "
          "It proves that prevention is cheaper than cure."),
 
-        ("📋 Audit & Compliance",
+        ("Audit & Compliance",
          "A complete record of every check the system performs",
          "Every time a doctor uses ResistanceMap ZA, the system creates a tamper-proof record. This protects you as a patient — "
          "it ensures that every alert was seen and every guideline was followed. It's like a receipt for your medical care."),
@@ -630,7 +630,7 @@ elif app_view == "Understanding Your Results":
         """, unsafe_allow_html=True)
 
     # ── Section 4: Key Medical Terms ──
-    st.markdown("<p class='section-header'>📚 Key Words Explained</p>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>Key Words Explained</p>", unsafe_allow_html=True)
 
     glossary = [
         ("ARV / ART", "Antiretroviral drugs — the daily pills that keep HIV under control."),
@@ -667,15 +667,15 @@ elif app_view == "Understanding Your Results":
     st.markdown("""
     <div class='alert-success'>
         <div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem;'>
-            💚 Important Reminders for Patients
+           Important Reminders for Patients
         </div>
         <div style='font-size: 0.88rem; line-height: 1.9;'>
-            ✅ <strong>Take your ARVs every day at the same time.</strong> This is the single most important thing you can do.<br>
-            ✅ <strong>Don't stop your medication</strong> even if you feel healthy — the virus is still there.<br>
-            ✅ <strong>Tell your doctor</strong> about any traditional medicines, supplements, or herbal remedies you use.<br>
-            ✅ <strong>Go to every clinic appointment</strong> and collect your pills on time.<br>
-            ✅ <strong>If you missed doses</strong>, don't panic — restart your full regimen and tell your healthcare worker.<br>
-            ✅ <strong>Ask questions.</strong> You have the right to understand your treatment. This tool is here to help.
+           <strong>Take your ARVs every day at the same time.</strong> This is the single most important thing you can do.<br>
+           <strong>Don't stop your medication</strong> even if you feel healthy — the virus is still there.<br>
+           <strong>Tell your doctor</strong> about any traditional medicines, supplements, or herbal remedies you use.<br>
+           <strong>Go to every clinic appointment</strong> and collect your pills on time.<br>
+           <strong>If you missed doses</strong>, don't panic — restart your full regimen and tell your healthcare worker.<br>
+           <strong>Ask questions.</strong> You have the right to understand your treatment. This tool is here to help.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -704,7 +704,7 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Logo Block ──
         st.markdown("""
         <div style='text-align:center; padding: 0.5rem 0 1rem 0;'>
-            <div style='font-size:2rem;'>🧬</div>
+            <div style='font-size:2rem;'></div>
             <div style='font-size:1.1rem; font-weight:700; color:#e2e8f0; letter-spacing:0.05em;'>
                 ResistanceMap ZA
             </div>
@@ -713,7 +713,7 @@ elif app_view == "Patient Assessment Dashboard":
                 Enterprise CDSS v4.0
             </div>
             <div style='font-size:0.6rem; color:#475569; margin-top:0.3rem;'>
-                KZN DOH | CAPRISA Validated
+                Educational Prototype
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -725,12 +725,10 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown(f"""
         <div style='background:#0a1628; border:1px solid #1e3a5f; border-radius:8px;
                     padding:0.6rem 0.8rem; margin-bottom:0.8rem; font-size:0.72rem;'>
-            <div style='color:#10b981; font-weight:600;'>● SYSTEM ONLINE</div>
+            <div style='color:#f59e0b; font-weight:600;'>DEMO MODE — SIMULATED DATA</div>
             <div style='color:#475569; margin-top:0.2rem;'>
                 {now.strftime("%d %b %Y  %H:%M:%S")} SAST
             </div>
-            <div style='color:#475569;'>NHLS Feed: <span style='color:#10b981;'>Active</span>
-            &nbsp;|&nbsp; HIVdb: <span style='color:#10b981;'>v9.6</span></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -738,7 +736,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Patient Identity</p>", unsafe_allow_html=True)
 
         patient_id = st.text_input("Anonymised Patient ID", "KZN-8842-A",
-                                    help="Linked to NHLS biobank. POPIA compliant.")
+                                    help="Anonymised demo identifier — no real patient data.")
 
         facility = st.selectbox("Treating Facility",
             ["King Edward VIII Hospital – Durban",
@@ -760,10 +758,10 @@ elif app_view == "Patient Assessment Dashboard":
 
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
-        tb_coinfection = st.checkbox("🫁 Active TB (On Rifampicin)",
+        tb_coinfection = st.checkbox("Active TB (On Rifampicin)",
                                       help="CYP3A4 inducer — reduces DTG half-life by ~50%")
 
-        traditional_meds = st.checkbox("🌿 Traditional Medicine (St. John's Wort / African Potato)",
+        traditional_meds = st.checkbox("Traditional Medicine (St. John's Wort / African Potato)",
                                         help="CYP450 pathway interaction")
 
         renal_function = st.selectbox("Kidney Function (eGFR)",
@@ -772,7 +770,7 @@ elif app_view == "Patient Assessment Dashboard":
              "Moderate Impairment (30–59 mL/min)",
              "Severe Impairment (<30 mL/min)"])
 
-        paediatric = st.checkbox("👶 Paediatric Patient (Weight-Band Dosing)",
+        paediatric = st.checkbox("Paediatric Patient (Weight-Band Dosing)",
                                   help="Activates paediatric PK adjustment engine")
 
         if paediatric:
@@ -795,8 +793,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("""
         <div style='font-size:0.62rem; color:#334155; text-align:center; line-height:1.6;'>
             ResistanceMap ZA OS © 2025<br>
-            Licensor: ResistanceMap Technologies (Pty) Ltd<br>
-            <span style='color:#1e3a5f;'>POPIA | NDoH | SAHPRA Compliant</span>
+            <span style='color:#1e3a5f;'>Educational prototype — not for clinical use</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -951,7 +948,7 @@ elif app_view == "Patient Assessment Dashboard":
     st.markdown(f"""
     <div class='top-header'>
         <div style='display:flex; align-items:center; gap:1rem;'>
-            <div style='font-size:1.8rem;'>🧬</div>
+            <div style='font-size:1.8rem;'></div>
             <div>
                 <div style='font-size:1.25rem; font-weight:700; color:#e2e8f0;
                             letter-spacing:0.02em;'>
@@ -1020,7 +1017,7 @@ elif app_view == "Patient Assessment Dashboard":
             <h3>CD4 Count (cells/μL)</h3>
             <div class='metric-value' style='color:{cd4_color}; font-size:1.4rem;'>{cd4_count:,}</div>
             <div class='metric-delta' style='color:#64748b;'>
-                {'⚠ Severe Immunocompromise' if cd4_count < 200 else 'Immunocompromised' if cd4_count < 350 else 'Adequate'}
+                {'Severe Immunocompromise' if cd4_count < 200 else 'Immunocompromised' if cd4_count < 350 else 'Adequate'}
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -1040,7 +1037,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown(f"""
         <div style='background:#1a1200; border:1px solid #f59e0b33; border-left:4px solid #f59e0b;
                     border-radius:8px; padding:0.7rem 1rem; margin:0.5rem 0; font-size:0.78rem;'>
-            ⚗️ <span style='color:#f59e0b; font-weight:700;'>ACTIVE METABOLIC MODIFIERS:</span>
+           <span style='color:#f59e0b; font-weight:700;'>ACTIVE METABOLIC MODIFIERS:</span>
             &nbsp; {mod_html}
         </div>
         """, unsafe_allow_html=True)
@@ -1052,12 +1049,12 @@ elif app_view == "Patient Assessment Dashboard":
     # ============================================================
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📈  PK Decay Curves",
-        "🧬  Mutation & Resistance",
-        "⚕️  Clinical Directives",
-        "🤖  AI Adherence Risk",
-        "💰  CFO Economics",
-        "📋  Audit & Compliance"
+        "PK Decay Curves",
+        "Mutation & Resistance",
+        "Clinical Directives",
+        "AI Adherence Risk",
+        "CFO Economics",
+        "Audit & Compliance"
     ])
 
     # ────────────────────────────────────────────────────────────
@@ -1268,7 +1265,7 @@ elif app_view == "Patient Assessment Dashboard":
     # TAB 2: MUTATION & CROSS-RESISTANCE PREDICTOR
     # ────────────────────────────────────────────────────────────
     with tab2:
-        st.markdown("<p class='section-header'>Genomic Resistance Prediction Engine (Stanford HIVdb Aligned)</p>",
+        st.markdown("<p class='section-header'>Genomic Resistance Prediction Engine</p>",
                     unsafe_allow_html=True)
 
         # ── Mutation Risk Matrix ──
@@ -1451,7 +1448,7 @@ elif app_view == "Patient Assessment Dashboard":
                     <div class='metric-card'>
                         <div style='display:flex; justify-content:space-between;'>
                             <div style='font-size:0.8rem; font-weight:700; color:#e2e8f0;'>
-                                🧬 {intel["name"]}
+                               {intel["name"]}
                             </div>
                             <span style='background:#0a0e1a; color:{sev_color};
                                          border:1px solid {sev_color}; border-radius:12px;
@@ -1492,17 +1489,17 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown("""
             <div class='alert-critical'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    🔴 NDoH PROTOCOL ALERT — RIFAMPICIN-DTG INTERACTION
+                   PROTOCOL ALERT — RIFAMPICIN-DTG INTERACTION
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient is confirmed on <strong>Rifampicin</strong> for active TB co-infection.
                     Rifampicin is a potent <strong>CYP3A4 inducer</strong> that reduces Dolutegravir
                     plasma AUC by approximately <strong>54%</strong>.<br><br>
-                    ⚡ <strong>Mandatory Action:</strong> Increase Dolutegravir from
+                   <strong>Mandatory Action:</strong> Increase Dolutegravir from
                     <span style='color:#fca5a5;'>50mg once daily → 50mg TWICE DAILY</span> (BD).<br>
-                    📋 <strong>Authority:</strong> SAHPRA Advisory 2023-HIV-004 |
-                    NDoH ART Guidelines Section 5.3<br>
-                    🧪 <strong>Monitoring:</strong> Repeat viral load at 4 weeks post-adjustment.
+                   <strong>Rationale:</strong> Standard clinical guidance for concurrent
+                    Rifampicin-based TB treatment and Dolutegravir-based ART.<br>
+                   <strong>Monitoring:</strong> Repeat viral load at 4 weeks post-adjustment.
                     Do not use NVP-based regimens concurrently.
                 </div>
             </div>
@@ -1514,17 +1511,17 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown("""
             <div class='alert-warning'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    🟡 PHARMACOVIGILANCE ALERT — TRADITIONAL MEDICINE CYP450 INTERACTION
+                   PHARMACOVIGILANCE ALERT — TRADITIONAL MEDICINE CYP450 INTERACTION
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient is using traditional preparations containing compounds that interact
                     with the <strong>CYP2C9 / CYP3A4</strong> enzymatic pathways (Hyperforin in St. John's Wort;
                     Phytosterols in African Potato).<br><br>
-                    ⚡ <strong>Effect:</strong> Accelerated Dolutegravir clearance. Estimated plasma
+                   <strong>Effect:</strong> Accelerated Dolutegravir clearance. Estimated plasma
                     concentration reduced by 30–40%.<br>
-                    📋 <strong>Action:</strong> Counsel patient on cessation. If non-adherent to
+                   <strong>Action:</strong> Counsel patient on cessation. If non-adherent to
                     cessation, consider enhanced monitoring (3-monthly viral load).<br>
-                    🌿 <strong>Note:</strong> African Potato (Hypoxis hemerocallidea) additionally
+                   <strong>Note:</strong> African Potato (Hypoxis hemerocallidea) additionally
                     suppresses bone marrow — monitor FBC if patient is on TDF.
                 </div>
             </div>
@@ -1537,14 +1534,14 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown(f"""
             <div class='alert-warning'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    🟡 RENAL DOSE ADJUSTMENT REQUIRED — {sev}
+                   RENAL DOSE ADJUSTMENT REQUIRED — {sev}
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient has <strong>{renal_function}</strong>.
                     Tenofovir Disoproxil Fumarate (TDF) is renally cleared and is
                     <strong>nephrotoxic at accumulating concentrations</strong>.<br><br>
-                    ⚡ <strong>Action:</strong> {'Consider switching TDF → TAF (Tenofovir Alafenamide). TAF achieves equivalent efficacy at 10% the plasma concentration, reducing nephrotoxicity.' if 'Severe' in renal_function else 'Monitor eGFR monthly. Consider TAF switch if trajectory worsening. Avoid NSAIDs.'}<br>
-                    🩺 <strong>Monitor:</strong> Monthly urinary phosphate/creatinine ratio.
+                   <strong>Action:</strong> {'Consider switching TDF → TAF (Tenofovir Alafenamide). TAF achieves equivalent efficacy at 10% the plasma concentration, reducing nephrotoxicity.' if 'Severe' in renal_function else 'Monitor eGFR monthly. Consider TAF switch if trajectory worsening. Avoid NSAIDs.'}<br>
+                   <strong>Monitor:</strong> Monthly urinary phosphate/creatinine ratio.
                     Watch for Fanconi Syndrome.
                 </div>
             </div>
@@ -1557,17 +1554,17 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown(f"""
             <div class='alert-info'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    🔵 PAEDIATRIC WEIGHT-BAND DOSING PROTOCOL ACTIVE
+                   PAEDIATRIC WEIGHT-BAND DOSING PROTOCOL ACTIVE
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient weight: <strong>{weight_kg} kg</strong>.
                     Paediatric DTG weight-band dosing (WHO 2023 revised schedule):<br><br>
-                    ⚡ <strong>Recommended DTG Dose:</strong>
+                   <strong>Recommended DTG Dose:</strong>
                     <span style='color:#93c5fd; font-weight:700;'>{band_dose} once daily</span><br>
-                    📋 Weight-band boundaries are automatically recalculated on each clinic visit.
+                   Weight-band boundaries are automatically recalculated on each clinic visit.
                     The system will issue a dose-escalation alert when the patient crosses the next
                     weight threshold (next band at {weight_kg + 5} kg).<br>
-                    🧮 <strong>Volume check:</strong> Confirm dispersible tablet formulation.
+                   <strong>Volume check:</strong> Confirm dispersible tablet formulation.
                     Do not substitute adult film-coated tablet.
                 </div>
             </div>
@@ -1581,16 +1578,16 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown(f"""
             <div class='alert-warning'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    ⚠️ SUB-INHIBITORY PRESSURE — {drug.upper()} / {mut} RISK
+                   SUB-INHIBITORY PRESSURE — {drug.upper()} / {mut} RISK
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     <strong>{drug}</strong> plasma concentration is in the sub-inhibitory range
                     (above detection, below MIC). This is the most dangerous pharmacokinetic window —
                     viral replication is occurring in the presence of drug, which is the exact
                     condition required for <strong>resistance mutation selection</strong>.<br><br>
-                    🧬 <strong>Primary Mutation Risk:</strong>
+                   <strong>Primary Mutation Risk:</strong>
                     <span style='color:#fde68a; font-weight:700;'>{mut}</span><br>
-                    ⚡ <strong>Immediate Action:</strong> Supervised re-dosing required within 6 hours.
+                   <strong>Immediate Action:</strong> Supervised re-dosing required within 6 hours.
                     Order point-of-care viral load to establish current replication status.
                 </div>
             </div>
@@ -1603,12 +1600,12 @@ elif app_view == "Patient Assessment Dashboard":
                 st.markdown(f"""
                 <div class='alert-critical'>
                     <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                        🔴 CRITICAL — {drug.upper()} CLEARED FROM PLASMA
+                       CRITICAL — {drug.upper()} CLEARED FROM PLASMA
                     </div>
                     <div style='font-size:0.82rem; line-height:1.7;'>
                         <strong>{drug}</strong> has been fully cleared. Zero pharmacological protection.
                         Patient is functionally without ART coverage for this component.<br><br>
-                        ⚡ <strong>Immediate Protocol:</strong> Do not restart mono-therapy.
+                       <strong>Immediate Protocol:</strong> Do not restart mono-therapy.
                         Restart full regimen simultaneously. If defaulted >72h and CD4 <200,
                         initiate enhanced OI prophylaxis. Alert community health worker for
                         home visit.
@@ -1621,21 +1618,21 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown("""
             <div class='alert-success'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                    ✅ SYSTEM CLEAR — NO ACTIVE CLINICAL DIRECTIVES
+                   SYSTEM CLEAR — NO ACTIVE CLINICAL DIRECTIVES
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     All pharmacokinetic parameters are within therapeutic range.
                     No comorbidity interactions detected. Patient appears adherent.
                     Next scheduled viral load review as per routine NDoH monitoring schedule.
                     <br><br>
-                    📋 <strong>Routine Action:</strong> Continue current regimen.
+                   <strong>Routine Action:</strong> Continue current regimen.
                     Confirm 3-monthly pharmacy collection. Record in TIER.Net.
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
         # ── Protocol Reference Table ──
-        st.markdown("<p class='section-header'>NDoH Guideline Reference Index</p>",
+        st.markdown("<p class='section-header'>Clinical Guideline Reference Index</p>",
                     unsafe_allow_html=True)
 
         st.markdown("""
@@ -1650,32 +1647,32 @@ elif app_view == "Patient Assessment Dashboard":
             </thead>
             <tbody>
                 <tr>
-                    <td>NDoH ART Guidelines 2023</td>
-                    <td>§5.3 — TB/HIV Co-infection</td>
+                    <td>South African ART Guidelines</td>
+                    <td>TB/HIV Co-infection</td>
                     <td>DTG dose doubling on Rifampicin</td>
                     <td><span class='status-stable'>APPLIED</span></td>
                 </tr>
                 <tr>
-                    <td>WHO HIV Guidelines 2023</td>
-                    <td>§7.1 — Paediatric Dosing</td>
+                    <td>WHO HIV Guidelines</td>
+                    <td>Paediatric Dosing</td>
                     <td>Weight-band DTG dispersible tablet</td>
                     <td><span class='status-stable'>APPLIED</span></td>
                 </tr>
                 <tr>
-                    <td>SAHPRA Advisory 2023-HIV-004</td>
-                    <td>Pharmacovigilance</td>
+                    <td>Pharmacovigilance Reference</td>
+                    <td>Traditional Medicine</td>
                     <td>Traditional medicine CYP450 warning</td>
                     <td><span class='status-stable'>APPLIED</span></td>
                 </tr>
                 <tr>
-                    <td>Stanford HIVdb v9.6</td>
+                    <td>Stanford HIVdb Algorithm</td>
                     <td>Mutation Scoring</td>
                     <td>K65R / M184V / R263K interpretation</td>
-                    <td><span class='status-stable'>SYNCED</span></td>
+                    <td><span class='status-stable'>REFERENCED</span></td>
                 </tr>
                 <tr>
-                    <td>NHLS Protocol 2024</td>
-                    <td>Viral Load Monitoring</td>
+                    <td>Viral Load Monitoring Guidance</td>
+                    <td>Laboratory Monitoring</td>
                     <td>Enhanced monitoring if VL >1000</td>
                     <td>{'<span class="status-critical">ACTIVE</span>' if viral_load > 1000 else '<span class="status-stable">ROUTINE</span>'}</td>
                 </tr>
@@ -1709,8 +1706,8 @@ elif app_view == "Patient Assessment Dashboard":
                 ["Employed (formal)", "Employed (informal)", "Unemployed", "Grant recipient"])
             transport = st.selectbox("Primary Transport",
                 ["Private vehicle", "Taxi/minibus", "Walking", "No reliable transport"])
-            taxi_strike = st.checkbox("🚌 Active Taxi Strike in District")
-            food_insecurity = st.checkbox("🍽️ Food Insecurity Reported")
+            taxi_strike = st.checkbox("Active Taxi Strike in District")
+            food_insecurity = st.checkbox("Food Insecurity Reported")
             disclosure = st.selectbox("HIV Status Disclosure",
                 ["Fully disclosed", "Partially disclosed", "Non-disclosed"])
 
@@ -1782,7 +1779,7 @@ elif app_view == "Patient Assessment Dashboard":
                     {ar_label} — Predicted Default Probability: {adherence_risk:.0f}%
                 </div>
                 <div style='font-size:0.8rem; margin-top:0.4rem;'>
-                    🤖 <strong>AI Recommended Action:</strong> {ar_action}
+                   <strong>AI Recommended Action:</strong> {ar_action}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1839,23 +1836,23 @@ elif app_view == "Patient Assessment Dashboard":
             interventions = []
             if adherence_risk >= 65:
                 interventions = [
-                    ("🚗 CHW Home Visit", "Dispatched within 24h. GPS coordinates loaded from last clinic registration."),
-                    ("📱 WhatsApp Alert", "POPIA-compliant encrypted reminder sent. Message: 'Your medication is ready for collection.'"),
-                    ("📞 Clinic Call-Back", "Dedicated adherence counsellor assigned. Case flagged in TIER.Net."),
-                    ("💊 Multi-Month Dispensing", "Consider 3-month supply to reduce transport burden at next visit.")
+                    ("CHW Home Visit", "Dispatched within 24h. GPS coordinates loaded from last clinic registration."),
+                    ("WhatsApp Alert", "Encrypted reminder sent. Message: 'Your medication is ready for collection.'"),
+                    ("Clinic Call-Back", "Dedicated adherence counsellor assigned. Case flagged in TIER.Net."),
+                    ("Multi-Month Dispensing", "Consider 3-month supply to reduce transport burden at next visit.")
                 ]
             elif adherence_risk >= 40:
                 interventions = [
-                    ("📱 WhatsApp Reminder", "Automated sequence: Day 1, Day 3, Day 5. Escalates to voice call."),
-                    ("📊 Viral Load Alert", "Fast-track VL order submitted to NHLS for processing within 48h.")
+                    ("WhatsApp Reminder", "Automated sequence: Day 1, Day 3, Day 5. Escalates to voice call."),
+                    ("Viral Load Alert", "Fast-track VL order submitted to NHLS for processing within 48h.")
                 ]
             elif adherence_risk >= 20:
                 interventions = [
-                    ("📱 SMS Reminder", "Standard 7-day pre-appointment reminder activated."),
+                    ("SMS Reminder", "Standard 7-day pre-appointment reminder activated."),
                 ]
             else:
                 interventions = [
-                    ("✅ Routine Monitoring", "No enhanced intervention required. Standard care pathway.")
+                    ("Routine Monitoring", "No enhanced intervention required. Standard care pathway.")
                 ]
 
             for title, desc in interventions:
@@ -2043,7 +2040,7 @@ elif app_view == "Patient Assessment Dashboard":
     # TAB 6: AUDIT LOG & COMPLIANCE
     # ────────────────────────────────────────────────────────────
     with tab6:
-        st.markdown("<p class='section-header'>Unalterable Audit Trail — POPIA & NDoH Compliance</p>",
+        st.markdown("<p class='section-header'>Session Audit Trail</p>",
                     unsafe_allow_html=True)
 
         # ── Simulated Audit Log ──
@@ -2161,26 +2158,25 @@ elif app_view == "Patient Assessment Dashboard":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Compliance Badges ──
+        # ── Design Notes ──
         col_c1, col_c2, col_c3 = st.columns(3)
 
-        compliance_items = [
-            (col_c1, "POPIA Compliant",
-             "All patient data anonymised. No PII stored in session. Data encrypted in transit (TLS 1.3).",
+        design_notes = [
+            (col_c1, "Anonymised Demo Data",
+             "Patient identifiers in this prototype are anonymised placeholders. No real patient data is stored.",
              "#10b981"),
-            (col_c2, "NDoH Guidelines v2023",
-             "All clinical directives cross-referenced against current South African ART treatment guidelines.",
+            (col_c2, "Guideline-Informed Logic",
+             "Clinical directives are modelled on publicly available South African and WHO ART treatment guidance, for educational purposes only.",
              "#3b82f6"),
-            (col_c3, "Stanford HIVdb Aligned",
-             "Mutation interpretation engine synchronised with HIVdb v9.6 drug resistance algorithm.",
+            (col_c3, "Stanford HIVdb-Inspired",
+             "Mutation interpretation logic is inspired by the public Stanford HIVdb resistance algorithm, for educational purposes only.",
              "#f59e0b"),
         ]
 
-        for col, title, desc, color in compliance_items:
+        for col, title, desc, color in design_notes:
             with col:
                 st.markdown(f"""
                 <div class='metric-card' style='border-color:{color}40; text-align:center;'>
-                    <div style='font-size:1.5rem; margin-bottom:0.5rem;'>✓</div>
                     <div style='font-weight:700; color:{color}; font-size:0.85rem;
                                 margin-bottom:0.5rem;'>
                         {title}
@@ -2247,7 +2243,7 @@ AUDIT INTEGRITY
 
         with exp_col1:
             st.download_button(
-                label="📄 Download Clinical Report (.txt)",
+                label="Download Clinical Report (.txt)",
                 data=report_text,
                 file_name=f"ResistanceMapZA_{patient_id}_{now.strftime('%Y%m%d_%H%M')}.txt",
                 mime="text/plain"
@@ -2257,7 +2253,7 @@ AUDIT INTEGRITY
             st.markdown("""
             <div style='background:#0d1b2e; border:1px solid #1e3a5f; border-radius:8px;
                         padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;'>
-                📊 Export to TIER.Net<br>
+               Export to TIER.Net<br>
                 <span style='color:#334155;'>(HL7/FHIR API — Enterprise Licence)</span>
             </div>
             """, unsafe_allow_html=True)
@@ -2266,7 +2262,7 @@ AUDIT INTEGRITY
             st.markdown("""
             <div style='background:#0d1b2e; border:1px solid #1e3a5f; border-radius:8px;
                         padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;'>
-                🏥 Push to NHLS Portal<br>
+               Push to NHLS Portal<br>
                 <span style='color:#334155;'>(NHLS API — Enterprise Licence)</span>
             </div>
             """, unsafe_allow_html=True)
@@ -2276,14 +2272,12 @@ AUDIT INTEGRITY
     st.markdown("""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color:#334155; line-height:2;'>
-        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Enterprise Clinical Decision Support System<br>
-        Licensor: ResistanceMap Technologies (Pty) Ltd &nbsp;·&nbsp;
-        KwaZulu-Natal Department of Health Prototype<br>
-        POPIA Compliant &nbsp;|&nbsp; NDoH Guidelines 2023 &nbsp;|&nbsp;
-        Stanford HIVdb v9.6 &nbsp;|&nbsp; SAHPRA Compliant<br>
+        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
+        Contact: sbagaria2009@gmail.com<br>
         <span style='color:#1e3a5f;'>
-            For clinical use only. Not a substitute for qualified medical judgement.
-            All outputs must be reviewed by a licensed clinician.
+            Educational and research prototype only — not an approved medical device.
+            Not a substitute for qualified medical judgement.
+            Do not use for real clinical decisions.
         </span>
     </div>
     """, unsafe_allow_html=True)
