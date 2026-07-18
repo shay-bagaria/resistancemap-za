@@ -37,14 +37,68 @@ def file_sha256(filename):
     return hashlib.sha256((DATA_DIR / filename).read_bytes()).hexdigest()
 
 
-RULES = load_yaml("rules.yaml")
-RULESET_VERSION = RULES.get("ruleset_version", "unknown")
-RULES_HASH = file_sha256("rules.yaml")
+EXPECTED_SCHEMA_VERSION = "1.0"
+DATA_FILES = ["drugs.yaml", "interactions.yaml", "rules.yaml"]
+
+# Numeric mappings that, when present as a {value: ...} dict, must carry a source.
+_SOURCED_FIELDS = (
+    "plasma_t_half_h", "c_max_ss_mg_L", "threshold_mg_L",
+    "secondary_threshold_mg_L", "intracellular_t_half_h", "activity_fraction_cutoff",
+)
 
 
-def _validate_rules(rules):
-    """Fail loudly on a malformed rules bundle rather than mis-dosing silently."""
-    ped = rules.get("paediatric_dtg_dosing")
+def _load_all():
+    """Load and hash every data file. Returns (data, hashes, error)."""
+    data, hashes = {}, {}
+    for fn in DATA_FILES:
+        try:
+            data[fn] = load_yaml(fn)
+            hashes[fn] = file_sha256(fn)
+        except FileNotFoundError:
+            return None, None, f"{fn}: file not found in {DATA_DIR}."
+        except yaml.YAMLError as exc:
+            return None, None, f"{fn}: YAML parse error: {exc}"
+    return data, hashes, None
+
+
+def _validate_data(data):
+    """Fail loudly on a malformed data bundle rather than mis-dosing silently."""
+    for fn in DATA_FILES:
+        sv = data[fn].get("schema_version")
+        if sv != EXPECTED_SCHEMA_VERSION:
+            return f"{fn}: schema_version {sv!r} != expected {EXPECTED_SCHEMA_VERSION!r}."
+
+    drugs = data["drugs.yaml"].get("drugs")
+    if not isinstance(drugs, list) or not drugs:
+        return "drugs.yaml: 'drugs' list is missing or empty."
+    for d in drugs:
+        nm = d.get("name", "?")
+        for req in ("tier", "curve_available", "genetic_barrier", "signature_mutation"):
+            if req not in d:
+                return f"drugs.yaml: drug {nm} is missing '{req}'."
+        tier = d["tier"]
+        if tier == "A":
+            if not isinstance(d.get("threshold_mg_L"), dict):
+                return f"drugs.yaml: tier A drug {nm} is missing threshold_mg_L."
+            if not isinstance(d.get("c_max_ss_mg_L"), dict):
+                return f"drugs.yaml: tier A drug {nm} is missing c_max_ss_mg_L."
+        elif tier == "B":
+            if d.get("threshold_mg_L") is not None:
+                return (f"drugs.yaml: tier B drug {nm} carries threshold_mg_L, "
+                        "violating the section 3.4 separation.")
+            if d.get("curve_available"):
+                if not isinstance(d.get("intracellular_t_half_h"), dict):
+                    return f"drugs.yaml: tier B drug {nm} is missing intracellular_t_half_h."
+                if not isinstance(d.get("activity_fraction_cutoff"), dict):
+                    return f"drugs.yaml: tier B drug {nm} is missing activity_fraction_cutoff."
+        else:
+            return f"drugs.yaml: drug {nm} has unknown tier {tier!r}."
+        for key in _SOURCED_FIELDS:
+            v = d.get(key)
+            if isinstance(v, dict) and "value" in v and not v.get("source"):
+                return f"drugs.yaml: {nm}.{key} is missing its 'source' key."
+
+    ped = data["rules.yaml"].get("paediatric_dtg_dosing")
     if not isinstance(ped, dict):
         return "rules.yaml: 'paediatric_dtg_dosing' section is missing or malformed."
     bands = ped.get("bands")
@@ -55,13 +109,82 @@ def _validate_rules(rules):
             return f"rules.yaml: band {i} is missing min_kg/max_kg."
         if not band.get("doses"):
             return f"rules.yaml: band {i} ({band.get('label', '?')}) has no doses."
+
+    if not data["rules.yaml"].get("regimens"):
+        return "rules.yaml: 'regimens' is missing or empty."
+    if not isinstance(data["interactions.yaml"].get("interactions"), list) \
+            or not data["interactions.yaml"]["interactions"]:
+        return "interactions.yaml: 'interactions' is missing or empty."
     return None
 
 
-_rules_error = _validate_rules(RULES)
-if _rules_error:
-    st.error(_rules_error)
+DATA, DATA_HASHES, _load_error = _load_all()
+if _load_error:
+    st.error(_load_error)
     st.stop()
+
+_data_error = _validate_data(DATA)
+if _data_error:
+    st.error(_data_error)
+    st.stop()
+
+DRUGS = DATA["drugs.yaml"]["drugs"]
+RULES = DATA["rules.yaml"]
+INTERACTIONS = {x["id"]: x for x in DATA["interactions.yaml"]["interactions"]}
+REGIMENS = {r["display"]: r["components"] for r in RULES["regimens"]}
+RISK_W = RULES["risk_score_weights"]
+ADH_W = RULES["adherence_weights"]
+VL_BANDS = RULES["viral_load_bands"]
+CD4_BANDS = RULES["cd4_bands"]
+
+RULESET_VERSION = RULES.get("ruleset_version", "unknown")
+DRUGS_HASH = DATA_HASHES["drugs.yaml"]
+INTER_HASH = DATA_HASHES["interactions.yaml"]
+RULES_HASH = DATA_HASHES["rules.yaml"]
+RULESET_FINGERPRINT = (
+    f"ruleset v{RULESET_VERSION} · drugs {DRUGS_HASH[:8]} · "
+    f"interactions {INTER_HASH[:8]} · rules {RULES_HASH[:8]}"
+)
+
+
+def _internal_drug(d):
+    """Map a drugs.yaml entry to the internal shape the engine/UI consume.
+
+    Tier B drugs deliberately receive no threshold_mg_L (methodology section 3.4),
+    so downstream code that keys on threshold presence skips them.
+    """
+    entry = {
+        "name": d["name"],
+        "abbreviation": d.get("abbreviation"),
+        "tier": d["tier"],
+        "curve_available": bool(d.get("curve_available")),
+        "is_prodrug": bool(d.get("is_prodrug")),
+        "active_moiety": d.get("active_moiety"),
+        "class": d.get("drug_class"),
+        "mutation": d.get("signature_mutation"),
+        "cross_resistance": d.get("cross_resistance", []),
+        "genetic_barrier": d.get("genetic_barrier"),
+        "renal_sensitive": bool(d.get("renally_cleared")),
+        "color": d.get("colour"),
+        "lloq": d.get("lloq_mg_L"),
+    }
+    if isinstance(d.get("plasma_t_half_h"), dict):
+        entry["t_half"] = d["plasma_t_half_h"]["value"]
+    if isinstance(d.get("c_max_ss_mg_L"), dict):
+        entry["c_max"] = d["c_max_ss_mg_L"]["value"]
+    if isinstance(d.get("threshold_mg_L"), dict):
+        entry["threshold_mg_L"] = d["threshold_mg_L"]["value"]
+    if isinstance(d.get("secondary_threshold_mg_L"), dict):
+        entry["secondary_threshold"] = d["secondary_threshold_mg_L"]["value"]
+        entry["secondary_label"] = d["secondary_threshold_mg_L"].get("label", "secondary")
+    if isinstance(d.get("intracellular_t_half_h"), dict):
+        entry["intracellular_t_half"] = d["intracellular_t_half_h"]["value"]
+    if isinstance(d.get("activity_fraction_cutoff"), dict):
+        entry["activity_fraction_cutoff"] = d["activity_fraction_cutoff"]["value"]
+    return entry
+
+
+PK_DB = {d["name"]: _internal_drug(d) for d in DRUGS}
 
 
 def chain_entry(prev_hash, entry):
@@ -802,10 +925,7 @@ elif app_view == "Patient Assessment Dashboard":
 
         st.markdown("<p class='section-header'>ART Regimen</p>", unsafe_allow_html=True)
 
-        regimen = st.selectbox("Current Regimen",
-            ["TLD (Tenofovir + Lamivudine + Dolutegravir)",
-             "TLE (Tenofovir + Lamivudine + Efavirenz)",
-             "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)"])
+        regimen = st.selectbox("Current Regimen", list(REGIMENS.keys()))
 
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
@@ -857,98 +977,63 @@ elif app_view == "Patient Assessment Dashboard":
     # 3. PHARMACOKINETIC ENGINE — CORE LOGIC
     # ============================================================
 
-    # ── PK Database (Stanford HIVdb aligned) ──
-    pk_db = {
-        "Tenofovir": {
-            "t_half": 17.0, "c_max": 0.30, "threshold_mg_L": 0.05,
-            "mutation": "K65R", "class": "NRTI",
-            "cross_resistance": ["K70E", "K70R"],
-            "renal_sensitive": True, "color": "#3b82f6"
-        },
-        "Lamivudine": {
-            "t_half": 5.0,  "c_max": 1.50, "threshold_mg_L": 0.50,
-            "mutation": "M184V", "class": "NRTI",
-            "cross_resistance": ["M184I"],
-            "renal_sensitive": True, "color": "#f59e0b"
-        },
-        "Dolutegravir": {
-            # Threshold corrected v4.0 -> v5.0: 0.50 -> 0.064 mg/L PA-IC90 (wild type),
-            # Cottrell, Hadzic & Kashuba, Clin Pharmacokinet 2013;52(11):981-94. Methodology 4.1.
-            # c_max 2.34 mg/L (IQR 1.84-3.04), steady-state median, NCT02924389 (methodology 4.1).
-            "t_half": 14.0, "c_max": 2.34, "threshold_mg_L": 0.064,
-            "secondary_threshold": 0.30, "secondary_label": "EC90",  # Wasserman et al., AAC 2022;66(7)
-            "mutation": "R263K", "class": "INSTI",
-            "cross_resistance": ["G118R", "E138K/A/T", "Q148R"],
-            "renal_sensitive": False, "color": "#10b981"
-        },
-        "Efavirenz": {
-            # Threshold corrected v4.0 -> v5.0: 0.51 -> 1.0 mg/L lower therapeutic limit,
-            # Kappelhoff et al., Clin Pharmacokinet 2007;46(2):93-108. Methodology 4.2.
-            # c_max 4.07 and t_half 52 h remain UNVERIFIED (methodology 4.2, 18) — unchanged pending sourcing.
-            "t_half": 52.0, "c_max": 4.07, "threshold_mg_L": 1.0,
-            "secondary_threshold": 0.70, "secondary_label": "SA cohort (Sinxadi 2016)",
-            "mutation": "K103N", "class": "NNRTI",
-            "cross_resistance": ["Y181C", "G190A", "V106M"],
-            "renal_sensitive": False, "color": "#a855f7"
-        },
-        "Abacavir": {
-            "t_half": 1.5, "c_max": 3.0, "threshold_mg_L": 0.26,
-            "mutation": "L74V", "class": "NRTI",
-            "cross_resistance": ["Y115F", "M184V"],
-            "renal_sensitive": False, "color": "#ec4899"
-        }
-    }
-
-    # ── Regimen Drug Mapping ──
-    regimen_drugs = {
-        "TLD (Tenofovir + Lamivudine + Dolutegravir)": ["Tenofovir", "Lamivudine", "Dolutegravir"],
-        "TLE (Tenofovir + Lamivudine + Efavirenz)":    ["Tenofovir", "Lamivudine", "Efavirenz"],
-        "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)": ["Abacavir", "Lamivudine", "Dolutegravir"]
-    }
+    # ── PK database and regimen mapping (loaded from YAML at startup) ──
+    pk_db = PK_DB
+    regimen_drugs = REGIMENS
 
     active_drugs = regimen_drugs.get(regimen, ["Tenofovir", "Lamivudine", "Dolutegravir"])
 
     # ── Adjusted Half-Life Calculation ──
+    # Multipliers relocated to interactions.yaml (methodology section 5). The
+    # arithmetic is unchanged from v4.0; pending_removal entries are actioned in
+    # Stage 3, not here.
     def calculate_adjusted_half_life(drug, stats):
         t_half = stats["t_half"]
         applied = []
 
-        # TB / Rifampicin CYP3A4 Induction
+        # Rifampicin (via the TB co-infection flag)
         if tb_coinfection and drug == "Dolutegravir":
-            t_half *= 0.50
-            applied.append(("Rifampicin CYP3A4 Induction", "−50% DTG half-life"))
+            ix = INTERACTIONS["rifampicin_dtg"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
 
         if tb_coinfection and drug == "Efavirenz":
-            t_half *= 0.74
-            applied.append(("Rifampicin CYP3A4 Induction", "−26% EFV half-life"))
+            ix = INTERACTIONS["rifampicin_efv"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Traditional Medicine CYP450
+        # Traditional medicine (single combined toggle; SJW multipliers applied)
         if traditional_meds and drug == "Dolutegravir":
-            t_half *= 0.65
-            applied.append(("Traditional Medicine CYP450", "−35% DTG half-life"))
+            ix = INTERACTIONS["sjw_dtg"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
 
         if traditional_meds and drug == "Efavirenz":
-            t_half *= 0.70
-            applied.append(("Traditional Medicine CYP450", "−30% EFV half-life"))
+            ix = INTERACTIONS["sjw_efv"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Renal Impairment
+        # Renal impairment
         renal_factor = 1.0
         if stats.get("renal_sensitive"):
+            rmul = INTERACTIONS["renal_tdf_3tc"]["multipliers"]
             if "Moderate Impairment" in renal_function:
-                renal_factor = 1.40
+                renal_factor = rmul["moderate"]
             elif "Severe Impairment" in renal_function:
-                renal_factor = 1.85
+                renal_factor = rmul["severe"]
             elif "Mild Impairment" in renal_function:
-                renal_factor = 1.15
+                renal_factor = rmul["mild"]
             if renal_factor > 1.0:
                 t_half *= renal_factor
-                applied.append(("Renal Clearance Delay", f"+{int((renal_factor-1)*100)}% TFV/3TC half-life"))
+                applied.append((INTERACTIONS["renal_tdf_3tc"]["display_name"],
+                                f"+{int((renal_factor - 1) * 100)}% TFV/3TC half-life"))
 
-        # Paediatric Weight-Band Adjustment
+        # Paediatric weight-band adjustment (linear W/W_ref)
         if paediatric:
-            weight_factor = max(0.6, min(1.0, weight_kg / 35))
+            pw = INTERACTIONS["paediatric_weight"]
+            weight_factor = max(pw["floor"], min(pw["cap"], weight_kg / pw["weight_reference_kg"]))
             t_half *= weight_factor
-            applied.append(("Paediatric Weight-Band", f"Weight factor {weight_factor:.2f}"))
+            applied.append((pw["display_name"], f"Weight factor {weight_factor:.2f}"))
 
         return t_half, applied
 
@@ -962,6 +1047,10 @@ elif app_view == "Patient Assessment Dashboard":
         stats = pk_db.get(drug)
         if not stats:
             continue
+        # Drugs without an available curve (e.g. abacavir, methodology section 4.5)
+        # are not modelled: no concentration, no curve, no threshold-breach alert.
+        if not stats.get("curve_available"):
+            continue
         adj_t_half, mods = calculate_adjusted_half_life(drug, stats)
         adjusted_halves[drug] = adj_t_half
         k_e = math.log(2) / adj_t_half
@@ -970,30 +1059,36 @@ elif app_view == "Patient Assessment Dashboard":
 
 
     # ── Derived Risk Signals ──
+    # Only tier A drugs carry a threshold_mg_L (methodology section 3.4); tier B
+    # prodrugs are excluded from these plasma-threshold comparisons until the
+    # Stage 3 two-tier engine provides their relative-exposure classification.
     vulnerable_drugs = [
         d for d in active_drugs
-        if d in current_levels
+        if d in current_levels and "threshold_mg_L" in pk_db[d]
         and (pk_db[d]["threshold_mg_L"] * 0.05) < current_levels[d] < pk_db[d]["threshold_mg_L"]
     ]
 
     below_mic_drugs = [
         d for d in active_drugs
-        if d in current_levels
+        if d in current_levels and "threshold_mg_L" in pk_db[d]
         and current_levels[d] < pk_db[d]["threshold_mg_L"]
     ]
 
     # ── Global Risk Score (0–100) ──
+    # Weights relocated to rules.yaml (methodology section 10). Class C. The whole
+    # score is restructured in Stage 4 (section 10.2); the arithmetic is unchanged.
     def compute_risk_score():
+        w = RISK_W
         score = 0
-        score += days_missed * 6          # Adherence
-        score += len(below_mic_drugs) * 15
-        score += len(vulnerable_drugs) * 10
-        if tb_coinfection:    score += 12
-        if traditional_meds:  score += 8
-        if viral_load > 1000: score += 10
-        if cd4_count < 200:   score += 8
-        if paediatric:        score += 5
-        return min(score, 100)
+        score += days_missed * w["per_day_missed"]
+        score += len(below_mic_drugs) * w["per_below_threshold_drug"]
+        score += len(vulnerable_drugs) * w["per_vulnerable_drug"]
+        if tb_coinfection:                        score += w["tb_coinfection"]
+        if traditional_meds:                      score += w["traditional_meds"]
+        if viral_load > VL_BANDS["high_above"]:   score += w["viral_load_gt_1000"]
+        if cd4_count < CD4_BANDS["severe_below"]: score += w["cd4_lt_200"]
+        if paediatric:                            score += w["paediatric"]
+        return min(score, w["cap"])
 
     risk_score = compute_risk_score()
 
@@ -1066,7 +1161,8 @@ elif app_view == "Patient Assessment Dashboard":
         </div>""", unsafe_allow_html=True)
 
     with kpi4:
-        vl_color = "#ef4444" if viral_load > 1000 else "#f59e0b" if viral_load > 50 else "#10b981"
+        vl_color = ("#ef4444" if viral_load > VL_BANDS["high_above"]
+                    else "#f59e0b" if viral_load > VL_BANDS["undetectable_below"] else "#10b981")
         vl_display = f"{viral_load:,}" if viral_load > 0 else "Undetectable"
         st.markdown(f"""
         <div class='metric-card'>
@@ -1076,13 +1172,16 @@ elif app_view == "Patient Assessment Dashboard":
         </div>""", unsafe_allow_html=True)
 
     with kpi5:
-        cd4_color = "#ef4444" if cd4_count < 200 else "#f59e0b" if cd4_count < 350 else "#10b981"
+        cd4_color = ("#ef4444" if cd4_count < CD4_BANDS["severe_below"]
+                     else "#f59e0b" if cd4_count < CD4_BANDS["low_below"] else "#10b981")
+        cd4_note = ('Severe Immunocompromise' if cd4_count < CD4_BANDS["severe_below"]
+                    else 'Immunocompromised' if cd4_count < CD4_BANDS["low_below"] else 'Adequate')
         st.markdown(f"""
         <div class='metric-card'>
             <h3>CD4 Count (cells/μL)</h3>
             <div class='metric-value' style='color:{cd4_color}; font-size:1.4rem;'>{cd4_count:,}</div>
             <div class='metric-delta' style='color:#64748b;'>
-                {'Severe Immunocompromise' if cd4_count < 200 else 'Immunocompromised' if cd4_count < 350 else 'Adequate'}
+                {cd4_note}
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -1145,12 +1244,11 @@ elif app_view == "Patient Assessment Dashboard":
 
             for drug in active_drugs:
                 stats = pk_db.get(drug)
-                if not stats:
+                if not stats or not stats.get("curve_available"):
                     continue
                 adj_t = adjusted_halves[drug]
                 k_e   = math.log(2) / adj_t
                 decay = stats["c_max"] * np.exp(-k_e * time_array)
-                mic_pct = (decay / stats["threshold_mg_L"]) * 100
 
                 color = stats["color"]
 
@@ -1166,43 +1264,48 @@ elif app_view == "Patient Assessment Dashboard":
                     )
                 ), row=1, col=1)
 
-                # Primary efficacy threshold line
-                fig.add_trace(go.Scatter(
-                    x=[0, t_max_hours],
-                    y=[stats["threshold_mg_L"], stats["threshold_mg_L"]],
-                    mode='lines', name=f"{drug} threshold",
-                    line=dict(width=1.2, dash='dot', color=color),
-                    opacity=0.5,
-                    showlegend=False,
-                    hoverinfo='skip'
-                ), row=1, col=1)
+                # Threshold line, secondary line and % coverage only exist for tier A
+                # drugs (methodology section 3.4); tier B prodrugs carry no threshold.
+                if "threshold_mg_L" in stats:
+                    mic_pct = (decay / stats["threshold_mg_L"]) * 100
 
-                # Secondary reference line (e.g. DTG EC90, EFV SA-cohort limit)
-                if stats.get("secondary_threshold"):
+                    # Primary efficacy threshold line
                     fig.add_trace(go.Scatter(
                         x=[0, t_max_hours],
-                        y=[stats["secondary_threshold"], stats["secondary_threshold"]],
-                        mode='lines',
-                        name=f"{drug} {stats.get('secondary_label', 'secondary')}",
-                        line=dict(width=1.0, dash='dash', color=color),
-                        opacity=0.3,
+                        y=[stats["threshold_mg_L"], stats["threshold_mg_L"]],
+                        mode='lines', name=f"{drug} threshold",
+                        line=dict(width=1.2, dash='dot', color=color),
+                        opacity=0.5,
                         showlegend=False,
                         hoverinfo='skip'
                     ), row=1, col=1)
 
-                # MIC % coverage
-                fig.add_trace(go.Scatter(
-                    x=time_array, y=mic_pct,
-                    mode='lines', name=f"{drug} MIC%",
-                    line=dict(width=2, color=color),
-                    fill='tozeroy', fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.08,)}",
-                    showlegend=False,
-                    hovertemplate=(
-                        f"<b>{drug}</b><br>"
-                        "Time: %{x:.0f}h<br>"
-                        "MIC Coverage: %{y:.1f}%<extra></extra>"
-                    )
-                ), row=2, col=1)
+                    # Secondary reference line (e.g. DTG EC90, EFV SA-cohort limit)
+                    if stats.get("secondary_threshold"):
+                        fig.add_trace(go.Scatter(
+                            x=[0, t_max_hours],
+                            y=[stats["secondary_threshold"], stats["secondary_threshold"]],
+                            mode='lines',
+                            name=f"{drug} {stats.get('secondary_label', 'secondary')}",
+                            line=dict(width=1.0, dash='dash', color=color),
+                            opacity=0.3,
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ), row=1, col=1)
+
+                    # MIC % coverage
+                    fig.add_trace(go.Scatter(
+                        x=time_array, y=mic_pct,
+                        mode='lines', name=f"{drug} MIC%",
+                        line=dict(width=2, color=color),
+                        fill='tozeroy', fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.08,)}",
+                        showlegend=False,
+                        hovertemplate=(
+                            f"<b>{drug}</b><br>"
+                            "Time: %{x:.0f}h<br>"
+                            "MIC Coverage: %{y:.1f}%<extra></extra>"
+                        )
+                    ), row=2, col=1)
 
             # 100% MIC reference on subplot 2
             fig.add_trace(go.Scatter(
@@ -1273,17 +1376,47 @@ elif app_view == "Patient Assessment Dashboard":
                 stats = pk_db.get(drug)
                 if not stats:
                     continue
+
+                # Drug with no available curve (abacavir, methodology section 4.5).
+                if not stats.get("curve_available"):
+                    st.markdown(f"""
+                    <div class='metric-card' style='margin-bottom:0.6rem;'>
+                        <div style='display:flex; justify-content:space-between; align-items:center;
+                                    margin-bottom:0.5rem;'>
+                            <span class='drug-badge'>{drug}</span>
+                            <span class='status-warning'>PARAMETER UNAVAILABLE</span>
+                        </div>
+                        <div style='font-size:0.78rem; color:#94a3b8; line-height:1.5;'>
+                            No decay curve. The active-moiety (carbovir triphosphate) half-life is
+                            unsourced, and the plasma value would misrepresent the drug
+                            (methodology &sect;4.5).
+                        </div>
+                        <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
+                            Signature mutation: {stats["mutation"]} &nbsp;·&nbsp; {stats["class"]}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    continue
+
                 lvl = current_levels[drug]
-                mic = stats["threshold_mg_L"]
-                pct = (lvl / mic) * 100
                 adj_t = adjusted_halves[drug]
 
-                if lvl >= mic:
-                    status_html = "<span class='status-stable'>ABOVE MIC</span>"
-                elif lvl >= mic * 0.05:
-                    status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
+                # Tier A drugs carry a threshold and get an above/below classification.
+                if "threshold_mg_L" in stats:
+                    mic = stats["threshold_mg_L"]
+                    pct = (lvl / mic) * 100
+                    if lvl >= mic:
+                        status_html = "<span class='status-stable'>ABOVE MIC</span>"
+                    elif lvl >= mic * 0.05:
+                        status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
+                    else:
+                        status_html = "<span class='status-critical'>CLEARED</span>"
+                    threshold_line = f"MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage"
                 else:
-                    status_html = "<span class='status-critical'>CLEARED</span>"
+                    # Tier B prodrug: plasma shown, but no plasma threshold (section 3.4).
+                    status_html = "<span class='status-warning'>PRODRUG</span>"
+                    threshold_line = ("No plasma threshold — intracellular anabolite model "
+                                      "arrives in Stage 3 (&sect;3.4)")
 
                 st.markdown(f"""
                 <div class='metric-card' style='margin-bottom:0.6rem;'>
@@ -1297,7 +1430,7 @@ elif app_view == "Patient Assessment Dashboard":
                         {lvl:.4f} mg/L
                     </div>
                     <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
-                        MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage
+                        {threshold_line}
                     </div>
                     <div style='font-size:0.72rem; color:#64748b;'>
                         Adj. t½: {adj_t:.1f}h &nbsp;·&nbsp; {stats["class"]}
@@ -1355,7 +1488,9 @@ elif app_view == "Patient Assessment Dashboard":
             mutation_data = []
             for drug in active_drugs:
                 stats = pk_db.get(drug)
-                if not stats or drug not in current_levels:
+                # A concentration ratio needs both a modelled level and a threshold,
+                # so only tier A drugs appear here (methodology section 3.4).
+                if not stats or drug not in current_levels or "threshold_mg_L" not in stats:
                     continue
                 lvl = current_levels[drug]
                 mic = stats["threshold_mg_L"]
@@ -1778,8 +1913,8 @@ elif app_view == "Patient Assessment Dashboard":
                 <tr>
                     <td>Viral Load Monitoring Guidance</td>
                     <td>Laboratory Monitoring</td>
-                    <td>Enhanced monitoring if VL >1000</td>
-                    <td>{'<span class="status-critical">ACTIVE</span>' if viral_load > 1000 else '<span class="status-stable">ROUTINE</span>'}</td>
+                    <td>Enhanced monitoring if VL >{VL_BANDS["high_above"]}</td>
+                    <td>{'<span class="status-critical">ACTIVE</span>' if viral_load > VL_BANDS["high_above"] else '<span class="status-stable">ROUTINE</span>'}</td>
                 </tr>
             </tbody>
         </table>
@@ -1817,19 +1952,19 @@ elif app_view == "Patient Assessment Dashboard":
                 ["Fully disclosed", "Partially disclosed", "Non-disclosed"])
 
             # ── Hand-weighted heuristic screen (class C, not a trained model) ──
+            # Weights relocated to rules.yaml (methodology section 11); arithmetic
+            # unchanged. Restructured into a support-needs panel in Stage 5.
+            aw = ADH_W
             adherence_risk = 0
-            adherence_risk += days_missed * 5
-            adherence_risk += distance_km * 0.6
-            adherence_risk += missed_appts * 6
-            adherence_risk += {"Employed (formal)": 0, "Employed (informal)": 5,
-                                "Unemployed": 15, "Grant recipient": 8}.get(employment, 0)
-            adherence_risk += {"Private vehicle": 0, "Taxi/minibus": 8,
-                                "Walking": 18, "No reliable transport": 25}.get(transport, 0)
-            if taxi_strike:    adherence_risk += 20
-            if food_insecurity: adherence_risk += 15
-            adherence_risk += {"Fully disclosed": 0, "Partially disclosed": 10,
-                                "Non-disclosed": 22}.get(disclosure, 0)
-            adherence_risk = min(adherence_risk, 100)
+            adherence_risk += days_missed * aw["per_day_missed"]
+            adherence_risk += distance_km * aw["per_km_distance"]
+            adherence_risk += missed_appts * aw["per_missed_appt"]
+            adherence_risk += aw["employment"].get(employment, 0)
+            adherence_risk += aw["transport"].get(transport, 0)
+            if taxi_strike:     adherence_risk += aw["taxi_strike"]
+            if food_insecurity: adherence_risk += aw["food_insecurity"]
+            adherence_risk += aw["disclosure"].get(disclosure, 0)
+            adherence_risk = min(adherence_risk, aw["cap"])
 
             if adherence_risk >= 65:
                 ar_label = "VERY HIGH RISK"
@@ -1895,17 +2030,14 @@ elif app_view == "Patient Assessment Dashboard":
                         unsafe_allow_html=True)
 
             factors = {
-                "Days Defaulted":        days_missed * 5,
-                "Distance from Clinic":  distance_km * 0.6,
-                "Missed Appointments":   missed_appts * 6,
-                "Employment Status":     {"Employed (formal)": 0, "Employed (informal)": 5,
-                                          "Unemployed": 15, "Grant recipient": 8}.get(employment, 0),
-                "Transport Access":      {"Private vehicle": 0, "Taxi/minibus": 8,
-                                          "Walking": 18, "No reliable transport": 25}.get(transport, 0),
-                "Taxi Strike Active":    20 if taxi_strike else 0,
-                "Food Insecurity":       15 if food_insecurity else 0,
-                "HIV Disclosure":        {"Fully disclosed": 0, "Partially disclosed": 10,
-                                          "Non-disclosed": 22}.get(disclosure, 0),
+                "Days Defaulted":        days_missed * aw["per_day_missed"],
+                "Distance from Clinic":  distance_km * aw["per_km_distance"],
+                "Missed Appointments":   missed_appts * aw["per_missed_appt"],
+                "Employment Status":     aw["employment"].get(employment, 0),
+                "Transport Access":      aw["transport"].get(transport, 0),
+                "Taxi Strike Active":    aw["taxi_strike"] if taxi_strike else 0,
+                "Food Insecurity":       aw["food_insecurity"] if food_insecurity else 0,
+                "HIV Disclosure":        aw["disclosure"].get(disclosure, 0),
             }
             factors = {k: v for k, v in sorted(factors.items(), key=lambda x: x[1], reverse=True) if v > 0}
 
@@ -2023,7 +2155,7 @@ elif app_view == "Patient Assessment Dashboard":
             f"Heuristic default score: {adherence_risk:.0f} | Category: {ar_label}",
             "INFO"))
 
-        data_hashes = {"rules.yaml": RULES_HASH}
+        data_hashes = dict(DATA_HASHES)
         audit_events = []
         prev_hash = GENESIS_HASH
         for seq, (event, detail, level) in enumerate(raw_events, start=1):
@@ -2109,7 +2241,7 @@ elif app_view == "Patient Assessment Dashboard":
             hash after it, so the chain is <strong>tamper-evident</strong>. It is <strong>not
             tamper-proof</strong>: an actor with write access can rebuild the whole chain.
             Genuine tamper resistance would require publishing the chain head outside this system.
-            Ruleset v{RULESET_VERSION} &middot; rules.yaml {RULES_HASH[:8]}.
+            {RULESET_FINGERPRINT}.
         </div>
         """, unsafe_allow_html=True)
 
@@ -2151,10 +2283,27 @@ elif app_view == "Patient Assessment Dashboard":
 
         exp_col1, exp_col2, exp_col3 = st.columns(3)
 
+        # Drug-level lines: tier A shows level vs threshold; tier B prodrugs show
+        # plasma only (no threshold, section 3.4); no-curve drugs are marked so.
+        drug_level_rows = []
+        for drug in active_drugs:
+            stats = pk_db.get(drug, {})
+            if not stats.get("curve_available"):
+                drug_level_rows.append(f"{drug}: parameter unavailable — no decay curve (prodrug, unsourced)")
+            elif drug in current_levels and "threshold_mg_L" in stats:
+                lvl = current_levels[drug]
+                thr = stats["threshold_mg_L"]
+                state = "ABOVE" if lvl >= thr else "BELOW"
+                drug_level_rows.append(f"{drug}: {lvl:.5f} mg/L (MIC={thr} | {state} MIC)")
+            elif drug in current_levels:
+                drug_level_rows.append(f"{drug}: {current_levels[drug]:.5f} mg/L plasma "
+                                       "(prodrug — no plasma threshold, section 3.4)")
+        drug_level_text = "\n".join(drug_level_rows)
+
         report_text = f"""
 ResistanceMap ZA OS — Clinical Assessment Report
 ================================================
-Software: ResistanceMap ZA OS v{APP_VERSION} · ruleset v{RULESET_VERSION} · rules.yaml {RULES_HASH[:8]}
+Software: ResistanceMap ZA OS v{APP_VERSION} · {RULESET_FINGERPRINT}
 Research prototype — not an approved medical device. Not for clinical use.
 Generated: {now.strftime("%d %B %Y %H:%M:%S")} SAST
 Patient ID: {patient_id}
@@ -2169,12 +2318,7 @@ Risk Score: {risk_score}/100 ({risk_label})
 
 DRUG LEVELS AT ASSESSMENT
 --------------------------
-""" + "\n".join([
-            f"{drug}: {current_levels[drug]:.5f} mg/L "
-            f"(MIC={pk_db[drug]['threshold_mg_L']} | "
-            f"{'ABOVE' if current_levels[drug] >= pk_db[drug]['threshold_mg_L'] else 'BELOW'} MIC)"
-            for drug in active_drugs if drug in current_levels
-        ]) + f"""
+{drug_level_text}
 
 ACTIVE MODIFIERS
 ----------------
@@ -2236,6 +2380,7 @@ AUDIT INTEGRITY
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color:#334155; line-height:2;'>
         ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
+        {RULESET_FINGERPRINT}<br>
         Contact: sbagaria2009@gmail.com<br>
         <span style='color:#1e3a5f;'>
             Educational and research prototype only — not an approved medical device.

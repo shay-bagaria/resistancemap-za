@@ -1,8 +1,68 @@
 # ResistanceMap ZA — clinical rules bundle
-# See METHODOLOGY.md sections 6 and 12. Stage 1 populates the paediatric
-# dolutegravir dosing bands only; further rules move here in later stages.
+# See METHODOLOGY.md sections 6, 8, 10, 11 and 12.
 
 ruleset_version: "0.5.0"
+schema_version: "1.0"
+
+# Regimen display name -> component drugs (by drug `name` in drugs.yaml).
+regimens:
+  - display: "TLD (Tenofovir + Lamivudine + Dolutegravir)"
+    components: [Tenofovir, Lamivudine, Dolutegravir]
+  - display: "TLE (Tenofovir + Lamivudine + Efavirenz)"
+    components: [Tenofovir, Lamivudine, Efavirenz]
+  - display: "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)"
+    components: [Abacavir, Lamivudine, Dolutegravir]
+
+# Composite risk-score weights (methodology section 10). Hand-chosen, class C.
+# The whole score is restructured in Stage 4 (section 10.2); unchanged in Stage 2.
+risk_score_weights:
+  classification: C
+  status: pending_restructure
+  methodology_section: "10.2"
+  per_day_missed: 6
+  per_below_threshold_drug: 15
+  per_vulnerable_drug: 10
+  tb_coinfection: 12
+  traditional_meds: 8
+  viral_load_gt_1000: 10
+  cd4_lt_200: 8
+  paediatric: 5
+  cap: 100
+
+# Adherence / support heuristic weights (methodology section 11). Class C.
+# Restructured into a support-needs panel in Stage 5 (section 11.2); unchanged now.
+adherence_weights:
+  classification: C
+  status: pending_restructure
+  methodology_section: "11.2"
+  per_day_missed: 5
+  per_km_distance: 0.6
+  per_missed_appt: 6
+  employment:
+    "Employed (formal)": 0
+    "Employed (informal)": 5
+    "Unemployed": 15
+    "Grant recipient": 8
+  transport:
+    "Private vehicle": 0
+    "Taxi/minibus": 8
+    "Walking": 18
+    "No reliable transport": 25
+  taxi_strike: 20
+  food_insecurity: 15
+  disclosure:
+    "Fully disclosed": 0
+    "Partially disclosed": 10
+    "Non-disclosed": 22
+  cap: 100
+
+# KPI-strip laboratory thresholds (methodology section 8 / dashboard).
+viral_load_bands:
+  undetectable_below: 50      # cp/mL; below this displays "Undetectable"
+  high_above: 1000            # cp/mL; above this is the high-viraemia band
+cd4_bands:
+  severe_below: 200           # cells/uL
+  low_below: 350              # cells/uL
 
 paediatric_dtg_dosing:
   classification: A            # Derived — WHO weight-band schedule, methodology section 6

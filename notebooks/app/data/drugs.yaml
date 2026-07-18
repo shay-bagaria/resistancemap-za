@@ -1,0 +1,178 @@
+# ResistanceMap ZA — drug parameter table
+# Populated from METHODOLOGY.md section 4. Every numeric mapping carries a
+# `value` and a `source`; where section 18 lists a value as unsourced the source
+# reads "TODO — UNVERIFIED" and the existing number is preserved unchanged.
+#
+# Two-tier structure (methodology section 3.3):
+#   tier A = plasma-acting parent compound; carries threshold_mg_L (an IQ can be computed).
+#   tier B = nucleos(t)ide prodrug; carries intracellular_t_half_h and
+#            activity_fraction_cutoff, and NO threshold_mg_L (methodology section 3.4).
+
+ruleset_version: "0.5.0"
+schema_version: "1.0"
+
+drugs:
+  # ── Tier A: plasma-acting ──────────────────────────────────────────────
+  - name: Dolutegravir
+    abbreviation: DTG
+    drug_class: INSTI
+    tier: A
+    is_prodrug: false
+    active_moiety: dolutegravir
+    curve_available: true
+
+    plasma_t_half_h:
+      value: 14.0
+      source: "Cottrell, Hadzic & Kashuba, Clin Pharmacokinet 2013;52(11):981-94"
+    c_max_ss_mg_L:
+      value: 2.34
+      source: "ClinicalTrials.gov NCT02924389, steady-state median (IQR 1.84-3.04)"
+
+    threshold_mg_L:
+      value: 0.064
+      label: "PA-IC90, wild type"
+      source: "Cottrell et al. 2013"
+    secondary_threshold_mg_L:
+      value: 0.3
+      label: "EC90"
+      source: "Wasserman et al., AAC 2022;66(7)"
+
+    lloq_mg_L: 0.0001
+    genetic_barrier: high
+    signature_mutation: R263K
+    cross_resistance: [G118R, "E138K/A/T", Q148R]
+    renally_cleared: false
+    colour: "#10b981"
+
+  - name: Efavirenz
+    abbreviation: EFV
+    drug_class: NNRTI
+    tier: A
+    is_prodrug: false
+    active_moiety: efavirenz
+    curve_available: true
+
+    plasma_t_half_h:
+      value: 52.0
+      source: "TODO — UNVERIFIED"
+      note: "Methodology section 4.2 / 18. Half-life is strongly CYP2B6 (516G>T) genotype-dependent; a single population value is a simplification."
+    c_max_ss_mg_L:
+      value: 4.07
+      source: "TODO — UNVERIFIED"
+      note: "Methodology section 4.2 / 18. Section 4.2 records a South African median C-mid of 2.2-2.3 mg/L (Sinxadi et al. 2016); 4.07 is the in-use value and is not that figure."
+
+    threshold_mg_L:
+      value: 1.0
+      label: "lower therapeutic limit"
+      source: "Kappelhoff et al., Clin Pharmacokinet 2007;46(2):93-108"
+    secondary_threshold_mg_L:
+      value: 0.7
+      label: "SA cohort"
+      source: "Sinxadi et al., Int J Antimicrob Agents 2016"
+
+    lloq_mg_L: 0.0001
+    genetic_barrier: low
+    signature_mutation: K103N
+    cross_resistance: [Y181C, G190A, V106M]
+    renally_cleared: false
+    colour: "#a855f7"
+
+  # ── Tier B: nucleos(t)ide prodrugs (no threshold_mg_L, methodology 3.4) ──
+  - name: Tenofovir
+    full_name: "Tenofovir disoproxil fumarate"
+    abbreviation: TDF
+    drug_class: NRTI
+    tier: B
+    is_prodrug: true
+    active_moiety: "tenofovir diphosphate (TFV-DP, intracellular)"
+    curve_available: true
+
+    plasma_t_half_h:
+      value: 17.0
+      source: "TODO — UNVERIFIED"
+      note: "Methodology section 4.3 records a terminal median of 69 h (IQR 58-77) from Louissaint et al. 2013. Not the value in use."
+    intracellular_t_half_h:
+      value: 48.0
+      compartment: PBMC
+      source: "Louissaint et al., AIDS Res Hum Retroviruses 2013"
+      note: "Published range is wide (48 h to >100 h, compartment- and assay-dependent). 48 h chosen as the shortest defensible value so the model errs towards flagging risk (methodology section 4.3)."
+    c_max_ss_mg_L:
+      value: 0.30
+      source: "TODO — UNVERIFIED"
+
+    activity_fraction_cutoff:
+      value: 0.25
+      classification: C
+      source: "Not sourceable. Hand-chosen. Methodology section 8.2 identifies this as the weakest element of the primary output."
+
+    lloq_mg_L: 0.0001
+    genetic_barrier: intermediate
+    signature_mutation: K65R
+    cross_resistance: [K70E, K70R]
+    renally_cleared: true
+    colour: "#3b82f6"
+
+  - name: Lamivudine
+    abbreviation: 3TC
+    drug_class: NRTI
+    tier: B
+    is_prodrug: true
+    active_moiety: "lamivudine triphosphate (3TC-TP, intracellular)"
+    curve_available: true
+
+    plasma_t_half_h:
+      value: 5.0
+      source: "GSK clinical protocol for NCT00214890 (methodology section 4.4: 5-7 h in HIV-infected subjects)"
+    intracellular_t_half_h:
+      value: 16.0
+      compartment: PBMC
+      source: "Hawkins et al., JAIDS 2005;39(4):406-11"
+      note: "Methodology section 4.4: the diphosphate-to-triphosphate step is saturable, so triphosphate can continue forming after plasma concentrations fall. A simple exponential from the missed dose underestimates persistence."
+    c_max_ss_mg_L:
+      value: 1.50
+      source: "TODO — UNVERIFIED"
+
+    activity_fraction_cutoff:
+      value: 0.25
+      classification: C
+      source: "Not sourceable. Hand-chosen. Methodology section 8.2 identifies this as the weakest element of the primary output."
+
+    lloq_mg_L: 0.0001
+    genetic_barrier: low
+    signature_mutation: M184V
+    cross_resistance: [M184I]
+    renally_cleared: true
+    colour: "#f59e0b"
+
+  - name: Abacavir
+    abbreviation: ABC
+    drug_class: NRTI
+    tier: B
+    is_prodrug: true
+    active_moiety: "carbovir triphosphate (CBV-TP, intracellular)"
+    curve_available: false        # methodology 4.5: intracellular half-life unsourced; do not plot
+
+    plasma_t_half_h:
+      value: 1.5
+      source: "TODO — UNVERIFIED"
+      note: "Preserved for reference only. MUST NOT be used for a decay curve (methodology section 4.5); the 1.5 h plasma value reproduces the v4.0 error."
+    intracellular_t_half_h:
+      value: null
+      compartment: PBMC
+      source: "TODO — UNVERIFIED"
+      note: "Carbovir triphosphate half-life must be read from Hawkins et al. 2005 or Moyle et al., AAC 2009;53(4):1532-8 before use (methodology section 4.5)."
+    c_max_ss_mg_L:
+      value: 3.0
+      source: "TODO — UNVERIFIED"
+
+    activity_fraction_cutoff:
+      value: 0.25
+      classification: C
+      source: "Not sourceable. Hand-chosen. Methodology section 8.2 identifies this as the weakest element of the primary output."
+
+    lloq_mg_L: 0.0001
+    genetic_barrier: intermediate
+    signature_mutation: L74V
+    cross_resistance: [Y115F, M184V]
+    renally_cleared: false
+    colour: "#ec4899"
