@@ -14,6 +14,7 @@ import html
 import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from engine import pk
 
 import yaml
 
@@ -931,16 +932,14 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
         tb_coinfection = st.checkbox("Active TB (On Rifampicin)",
-                                      help="CYP3A4 inducer — reduces DTG half-life by ~50%")
+                                      help="UGT1A1/CYP3A4 inducer — reduces DTG half-life by ~54%")
 
-        traditional_meds = st.checkbox("Traditional Medicine (St. John's Wort / African Potato)",
+        st_johns_wort = st.checkbox("Traditional Medicine (St. John's Wort)",
+                                        help="CYP450 pathway interaction")
+        african_potato = st.checkbox("Traditional Medicine (African Potato)",
                                         help="CYP450 pathway interaction")
 
-        renal_function = st.selectbox("Kidney Function (eGFR)",
-            ["Normal (>90 mL/min)",
-             "Mild Impairment (60–89 mL/min)",
-             "Moderate Impairment (30–59 mL/min)",
-             "Severe Impairment (<30 mL/min)"])
+        renal_function = st.number_input("Kidney Function (eGFR, mL/min/1.73m²)", 0, 200, 90)
 
         paediatric = st.checkbox("Paediatric Patient (Weight-Band Dosing)",
                                   help="Activates paediatric PK adjustment engine")
@@ -1003,38 +1002,37 @@ elif app_view == "Patient Assessment Dashboard":
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Traditional medicine (single combined toggle; SJW multipliers applied)
-        if traditional_meds and drug == "Dolutegravir":
+        # Traditional medicine
+        if st_johns_wort and drug == "Dolutegravir":
             ix = INTERACTIONS["sjw_dtg"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        if traditional_meds and drug == "Efavirenz":
+        if st_johns_wort and drug == "Efavirenz":
             ix = INTERACTIONS["sjw_efv"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Renal impairment
-        renal_factor = 1.0
-        if stats.get("renal_sensitive"):
-            rmul = INTERACTIONS["renal_tdf_3tc"]["multipliers"]
-            if "Moderate Impairment" in renal_function:
-                renal_factor = rmul["moderate"]
-            elif "Severe Impairment" in renal_function:
-                renal_factor = rmul["severe"]
-            elif "Mild Impairment" in renal_function:
-                renal_factor = rmul["mild"]
-            if renal_factor > 1.0:
-                t_half *= renal_factor
-                applied.append((INTERACTIONS["renal_tdf_3tc"]["display_name"],
-                                f"+{int((renal_factor - 1) * 100)}% TFV/3TC half-life"))
+        if african_potato and drug == "Dolutegravir":
+            ix = INTERACTIONS["african_potato_dtg"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
 
-        # Paediatric weight-band adjustment (linear W/W_ref)
+        if african_potato and drug == "Efavirenz":
+            ix = INTERACTIONS["african_potato_efv"]
+            t_half *= ix["multiplier"]
+            applied.append((ix["display_name"], ix["display_desc"]))
+
+        # Renal impairment
+        # Scaling is disabled pending a source for the renally cleared fraction (methodology 5.5)
+
+        # Paediatric allometric adjustment
         if paediatric:
-            pw = INTERACTIONS["paediatric_weight"]
-            weight_factor = max(pw["floor"], min(pw["cap"], weight_kg / pw["weight_reference_kg"]))
-            t_half *= weight_factor
-            applied.append((pw["display_name"], f"Weight factor {weight_factor:.2f}"))
+            if age_months is None or age_months >= 6:
+                pw = INTERACTIONS["paediatric_weight"]
+                weight_factor = (weight_kg / pw["weight_reference_kg"]) ** 0.25
+                t_half *= weight_factor
+                applied.append((pw["display_name"], f"Allometric factor {weight_factor:.2f}"))
 
         return t_half, applied
 
@@ -1048,14 +1046,23 @@ elif app_view == "Patient Assessment Dashboard":
         stats = pk_db.get(drug)
         if not stats:
             continue
-        # Drugs without an available curve (e.g. abacavir, methodology section 4.5)
-        # are not modelled: no concentration, no curve, no threshold-breach alert.
         if not stats.get("curve_available"):
             continue
+            
+        if paediatric and age_months is not None and age_months < 6:
+            continue
+
         adj_t_half, mods = calculate_adjusted_half_life(drug, stats)
         adjusted_halves[drug] = adj_t_half
-        k_e = math.log(2) / adj_t_half
-        current_levels[drug] = stats["c_max"] * math.exp(-k_e * hours_missed)
+        
+        if stats.get("tier") == "A":
+            current_levels[drug], clamp_flag = pk.concentration_at(
+                hours_missed, stats["c_max"], adj_t_half, stats.get("lloq")
+            )
+        else:
+            k_e_plasma = math.log(2) / adj_t_half
+            current_levels[drug] = stats["c_max"] * math.exp(-k_e_plasma * hours_missed)
+
         all_modifiers[drug] = mods
 
 
@@ -1085,7 +1092,7 @@ elif app_view == "Patient Assessment Dashboard":
         score += len(below_mic_drugs) * w["per_below_threshold_drug"]
         score += len(vulnerable_drugs) * w["per_vulnerable_drug"]
         if tb_coinfection:                        score += w["tb_coinfection"]
-        if traditional_meds:                      score += w["traditional_meds"]
+        if st_johns_wort or african_potato:       score += w["traditional_meds"]
         if viral_load > VL_BANDS["high_above"]:   score += w["viral_load_gt_1000"]
         if cd4_count < CD4_BANDS["severe_below"]: score += w["cd4_lt_200"]
         if paediatric:                            score += w["paediatric"]
@@ -1267,6 +1274,8 @@ elif app_view == "Patient Assessment Dashboard":
                 adj_t = adjusted_halves[drug]
                 k_e   = math.log(2) / adj_t
                 decay = stats["c_max"] * np.exp(-k_e * time_array)
+                if stats.get("tier") == "A" and stats.get("lloq"):
+                    decay = np.maximum(decay, stats["lloq"])
 
                 color = stats["color"]
 
@@ -1429,7 +1438,9 @@ elif app_view == "Patient Assessment Dashboard":
                         status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
                     else:
                         status_html = "<span class='status-critical'>CLEARED</span>"
-                    threshold_line = f"MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage"
+                    
+                    clamp_note = "<br><span style='color:#ef4444;'>below limit of quantification</span>" if lvl <= stats.get("lloq", -1) else ""
+                    threshold_line = f"MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage{clamp_note}"
                 else:
                     # Tier B prodrug: relative exposure (section 3.4).
                     status_html = "<span class='status-warning'>PRODRUG</span>"

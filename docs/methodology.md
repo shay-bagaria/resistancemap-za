@@ -157,3 +157,33 @@ During this sub-therapeutic window, viral replication resumes under sub-lethal d
 ---
 
 This document is a living methodology record and will be updated as the pipeline develops.
+
+## 5. Half-Life Modifiers
+### 5.1 Rifampicin and Dolutegravir
+Multiplier: 0.46 (updated from 0.50). 
+Derivation: AUC ∝ 1/CL, and AUC_rif / AUC_control = 0.46 (54% reduction)
+⇒ CL_rif / CL_control = 1/0.46 = 2.174
+t½ = ln(2)·V/CL, V assumed unchanged
+⇒ t½_rif = 14 h × 0.46 = 6.4 h
+Rifampicin induces UGT1A1 (principal), UGT1A9 and CYP3A4 (<10%).
+
+### 5.2 Rifampicin and Efavirenz
+Status: removed. South African data support use of efavirenz with rifampicin-based tuberculosis treatment without dose adjustment in that population, and CYP2B6 516G>T, which is common locally, is a larger determinant of efavirenz exposure than the rifampicin interaction.
+
+### 5.3 St John's Wort
+Multiplier: 1.0. Status: direction_only.
+
+### 5.4 African Potato (Hypoxis hemerocallidea)
+Multiplier: 1.0. Status: active (no modelled effect). Evidence is largely in vitro and does not consistently support induction.
+
+### 5.5 Renal Function
+Renal option taken: Implemented eGFR scaling (t½_patient ≈ t½_normal × (eGFR_reference / eGFR_patient) with eGFR_reference = 90), but scaling is explicitly disabled by assuming complete renal clearance until the fraction_renally_cleared term is sourced.
+
+### 5.6 Paediatric Scaling
+Allometric scaling: t½_child = t½_adult × (W / 70) ** 0.25. Model not applicable below six months.
+
+## 17. Correction Table
+
+| Original Issue / Row | Correction Applied | Commit Hash / Reference |
+|---|---|---|
+| Stage 3 updates (various) | §5.1-5.6 updates implemented | (Current commit) |

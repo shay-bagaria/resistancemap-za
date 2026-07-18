@@ -110,6 +110,10 @@ drugs:
     signature_mutation: K65R
     cross_resistance: [K70E, K70R]
     renally_cleared: true
+    fraction_renally_cleared:
+      value: null
+      source: "TODO — UNVERIFIED"
+      note: "Section 5.5: Explicit assumption of complete renal clearance until supplied (scaling disabled)."
     colour: "#3b82f6"
 
   - name: Lamivudine
@@ -122,7 +126,9 @@ drugs:
 
     plasma_t_half_h:
       value: 5.0
+      range_h: [5, 7]
       source: "GSK clinical protocol for NCT00214890 (methodology section 4.4: 5-7 h in HIV-infected subjects)"
+      note: "The lower bound of the published interval (5 h) was chosen so the model errs towards flagging risk."
     intracellular_t_half_h:
       value: 16.0
       compartment: PBMC
@@ -142,6 +148,10 @@ drugs:
     signature_mutation: M184V
     cross_resistance: [M184I]
     renally_cleared: true
+    fraction_renally_cleared:
+      value: null
+      source: "TODO — UNVERIFIED"
+      note: "Section 5.5: Explicit assumption of complete renal clearance until supplied (scaling disabled)."
     colour: "#f59e0b"
 
   - name: Abacavir
