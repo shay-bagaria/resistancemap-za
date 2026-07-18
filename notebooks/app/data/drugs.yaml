@@ -122,7 +122,9 @@ drugs:
 
     plasma_t_half_h:
       value: 5.0
+      range_h: [5, 7]
       source: "GSK clinical protocol for NCT00214890 (methodology section 4.4: 5-7 h in HIV-infected subjects)"
+      note: "Published plasma range is 5-7 h; the lower bound is used as the in-model value."
     intracellular_t_half_h:
       value: 16.0
       compartment: PBMC

@@ -17,11 +17,19 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+# Make the app directory importable so the pure engine package resolves under
+# both `streamlit run` and pytest/AppTest.
+import sys
+_APP_DIR = Path(__file__).resolve().parent
+if str(_APP_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR))
+from engine import pk
+
 # ============================================================
 # DATA BUNDLE LOADING (versioned rules, methodology section 13.2)
 # ============================================================
 APP_VERSION = "5.0"
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = _APP_DIR / "data"
 SAST = ZoneInfo("Africa/Johannesburg")
 
 
@@ -931,19 +939,25 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
         tb_coinfection = st.checkbox("Active TB (On Rifampicin)",
-                                      help="CYP3A4 inducer — reduces DTG half-life by ~50%")
+                                      help="Rifampicin induces UGT1A1 (principal) and CYP3A4 (<10%); "
+                                           "DTG t½ ×0.46, manage with 50 mg twice daily (methodology §5.1).")
 
-        traditional_meds = st.checkbox("Traditional Medicine (St. John's Wort / African Potato)",
-                                        help="CYP450 pathway interaction")
+        st_johns_wort = st.checkbox("St John's Wort",
+                                    help="Enzyme inducer (hyperforin). Direction of effect only — "
+                                         "no modelled magnitude (methodology §5.3).")
 
-        renal_function = st.selectbox("Kidney Function (eGFR)",
-            ["Normal (>90 mL/min)",
-             "Mild Impairment (60–89 mL/min)",
-             "Moderate Impairment (30–59 mL/min)",
-             "Severe Impairment (<30 mL/min)"])
+        african_potato = st.checkbox("African Potato (Hypoxis hemerocallidea)",
+                                     help="No modelled effect; record and counsel (methodology §5.4).")
+
+        # Derived flag preserved for the (class C, pending_restructure) composite score.
+        traditional_meds = st_johns_wort or african_potato
+
+        egfr = st.number_input("Kidney Function — eGFR (mL/min/1.73m²)", 5, 150, 95,
+                               help="Numeric eGFR. Renal status is an accumulation-nephrotoxicity "
+                                    "safety alert, separate from the resistance model (methodology §5.5).")
 
         paediatric = st.checkbox("Paediatric Patient (Weight-Band Dosing)",
-                                  help="Activates paediatric PK adjustment engine")
+                                  help="Activates paediatric PK adjustment (allometric, methodology §5.6)")
 
         if paediatric:
             weight_kg = st.slider("Patient Weight (kg)", 3, 40, 15)
@@ -992,47 +1006,27 @@ elif app_view == "Patient Assessment Dashboard":
         t_half = stats["t_half"]
         applied = []
 
-        # Rifampicin (via the TB co-infection flag)
+        # Rifampicin + DTG only: derived 0.46 multiplier, UGT1A1 principal (§5.1).
+        # The EFV interaction was removed in Stage 3 (§5.2), so no EFV branch.
         if tb_coinfection and drug == "Dolutegravir":
             ix = INTERACTIONS["rifampicin_dtg"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
-        if tb_coinfection and drug == "Efavirenz":
-            ix = INTERACTIONS["rifampicin_efv"]
-            t_half *= ix["multiplier"]
-            applied.append((ix["display_name"], ix["display_desc"]))
+        # Herbals carry no modelled magnitude (§5.3 direction only, §5.4 no effect):
+        # multiplier 1.0, nothing applied to the half-life. They surface as alerts.
 
-        # Traditional medicine (single combined toggle; SJW multipliers applied)
-        if traditional_meds and drug == "Dolutegravir":
-            ix = INTERACTIONS["sjw_dtg"]
-            t_half *= ix["multiplier"]
-            applied.append((ix["display_name"], ix["display_desc"]))
+        # Renal: eGFR scaling is disabled pending an unsourced renally-cleared
+        # fraction (§5.5). Renal is a standalone safety alert; it does not modify
+        # the half-life or the resistance model.
 
-        if traditional_meds and drug == "Efavirenz":
-            ix = INTERACTIONS["sjw_efv"]
-            t_half *= ix["multiplier"]
-            applied.append((ix["display_name"], ix["display_desc"]))
-
-        # Renal impairment
-        renal_factor = 1.0
-        if stats.get("renal_sensitive"):
-            rmul = INTERACTIONS["renal_tdf_3tc"]["multipliers"]
-            if "Moderate Impairment" in renal_function:
-                renal_factor = rmul["moderate"]
-            elif "Severe Impairment" in renal_function:
-                renal_factor = rmul["severe"]
-            elif "Mild Impairment" in renal_function:
-                renal_factor = rmul["mild"]
-            if renal_factor > 1.0:
-                t_half *= renal_factor
-                applied.append((INTERACTIONS["renal_tdf_3tc"]["display_name"],
-                                f"+{int((renal_factor - 1) * 100)}% TFV/3TC half-life"))
-
-        # Paediatric weight-band adjustment (linear W/W_ref)
+        # Paediatric allometric scaling t½_child = t½_adult × (W/70)^0.25 (§5.6).
+        # Below curve_min_age_months the curve is suppressed upstream, so this
+        # branch only runs for ages the allometric model covers.
         if paediatric:
             pw = INTERACTIONS["paediatric_weight"]
-            weight_factor = max(pw["floor"], min(pw["cap"], weight_kg / pw["weight_reference_kg"]))
+            weight_factor = pk.allometric_half_life_factor(
+                weight_kg, pw["reference_weight_kg"], pw["exponent"])
             t_half *= weight_factor
             applied.append((pw["display_name"], f"Weight factor {weight_factor:.2f}"))
 
@@ -1044,19 +1038,24 @@ elif app_view == "Patient Assessment Dashboard":
     adjusted_halves  = {}
     all_modifiers    = {}
 
-    for drug in active_drugs:
-        stats = pk_db.get(drug)
-        if not stats:
-            continue
-        # Drugs without an available curve (e.g. abacavir, methodology section 4.5)
-        # are not modelled: no concentration, no curve, no threshold-breach alert.
-        if not stats.get("curve_available"):
-            continue
-        adj_t_half, mods = calculate_adjusted_half_life(drug, stats)
-        adjusted_halves[drug] = adj_t_half
-        k_e = math.log(2) / adj_t_half
-        current_levels[drug] = stats["c_max"] * math.exp(-k_e * hours_missed)
-        all_modifiers[drug] = mods
+    # Below curve_min_age_months the allometric model is not applicable (UGT1A1
+    # maturation, §5.6): suppress the whole decay model, not just the dose.
+    curve_min_age = INTERACTIONS["paediatric_weight"].get("curve_min_age_months", 6)
+    curve_suppressed = bool(paediatric and age_months is not None and age_months < curve_min_age)
+
+    if not curve_suppressed:
+        for drug in active_drugs:
+            stats = pk_db.get(drug)
+            if not stats:
+                continue
+            # Drugs without an available curve (e.g. abacavir, methodology section 4.5)
+            # are not modelled: no concentration, no curve, no threshold-breach alert.
+            if not stats.get("curve_available"):
+                continue
+            adj_t_half, mods = calculate_adjusted_half_life(drug, stats)
+            adjusted_halves[drug] = adj_t_half
+            current_levels[drug] = pk.concentration_at(hours_missed, stats["c_max"], adj_t_half)
+            all_modifiers[drug] = mods
 
 
     # ── Derived Risk Signals ──
@@ -1263,81 +1262,78 @@ elif app_view == "Patient Assessment Dashboard":
 
             fig = make_subplots(
                 rows=2, cols=1,
-                subplot_titles=("Plasma Concentration vs. Time (Log Scale)",
-                                "% MIC Coverage Remaining"),
+                subplot_titles=("Tier A plasma concentration vs time (log scale)",
+                                "Tier A % threshold coverage · Tier B % steady-state exposure"),
                 vertical_spacing=0.12,
-                row_heights=[0.65, 0.35]
+                row_heights=[0.6, 0.4]
             )
 
-            for drug in active_drugs:
+            lloq_flags = {}
+            for drug in (active_drugs if not curve_suppressed else []):
                 stats = pk_db.get(drug)
                 if not stats or not stats.get("curve_available"):
                     continue
-                adj_t = adjusted_halves[drug]
-                k_e   = math.log(2) / adj_t
-                decay = stats["c_max"] * np.exp(-k_e * time_array)
-
                 color = stats["color"]
 
-                # Main decay line
-                fig.add_trace(go.Scatter(
-                    x=time_array, y=decay,
-                    mode='lines', name=drug,
-                    line=dict(width=2.5, color=color),
-                    hovertemplate=(
-                        f"<b>{drug}</b><br>"
-                        "Time: %{x:.0f}h<br>"
-                        "Conc: %{y:.4f} mg/L<extra></extra>"
-                    )
-                ), row=1, col=1)
-
-                # Threshold line, secondary line and % coverage only exist for tier A
-                # drugs (methodology section 3.4); tier B prodrugs carry no threshold.
                 if "threshold_mg_L" in stats:
-                    mic_pct = (decay / stats["threshold_mg_L"]) * 100
+                    # Tier A: plasma concentration on top, clamped at the LLOQ (§4.6)
+                    # so the log axis cannot span dozens of empty decades.
+                    adj_t = adjusted_halves[drug]
+                    k_e = math.log(2) / adj_t
+                    raw = stats["c_max"] * np.exp(-k_e * time_array)
+                    lloq = stats.get("lloq") or 1e-4
+                    decay = np.clip(raw, lloq, None)
+                    lloq_flags[drug] = bool(current_levels[drug] <= lloq)
 
-                    # Primary efficacy threshold line
                     fig.add_trace(go.Scatter(
-                        x=[0, t_max_hours],
-                        y=[stats["threshold_mg_L"], stats["threshold_mg_L"]],
-                        mode='lines', name=f"{drug} threshold",
-                        line=dict(width=1.2, dash='dot', color=color),
-                        opacity=0.5,
-                        showlegend=False,
-                        hoverinfo='skip'
+                        x=time_array, y=decay, mode='lines', name=drug,
+                        line=dict(width=2.5, color=color),
+                        hovertemplate=(f"<b>{drug}</b><br>Time: %{{x:.0f}}h<br>"
+                                       "Conc: %{y:.4f} mg/L<extra></extra>")
                     ), row=1, col=1)
 
-                    # Secondary reference line (e.g. DTG EC90, EFV SA-cohort limit)
+                    fig.add_trace(go.Scatter(
+                        x=[0, t_max_hours], y=[stats["threshold_mg_L"]] * 2,
+                        mode='lines', name=f"{drug} threshold",
+                        line=dict(width=1.2, dash='dot', color=color),
+                        opacity=0.5, showlegend=False, hoverinfo='skip'
+                    ), row=1, col=1)
+
                     if stats.get("secondary_threshold"):
                         fig.add_trace(go.Scatter(
-                            x=[0, t_max_hours],
-                            y=[stats["secondary_threshold"], stats["secondary_threshold"]],
-                            mode='lines',
-                            name=f"{drug} {stats.get('secondary_label', 'secondary')}",
+                            x=[0, t_max_hours], y=[stats["secondary_threshold"]] * 2,
+                            mode='lines', name=f"{drug} {stats.get('secondary_label', 'secondary')}",
                             line=dict(width=1.0, dash='dash', color=color),
-                            opacity=0.3,
-                            showlegend=False,
-                            hoverinfo='skip'
+                            opacity=0.3, showlegend=False, hoverinfo='skip'
                         ), row=1, col=1)
 
-                    # MIC % coverage
+                    cov = (decay / stats["threshold_mg_L"]) * 100
                     fig.add_trace(go.Scatter(
-                        x=time_array, y=mic_pct,
-                        mode='lines', name=f"{drug} MIC%",
+                        x=time_array, y=cov, mode='lines', name=f"{drug} coverage",
                         line=dict(width=2, color=color),
-                        fill='tozeroy', fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.08,)}",
+                        fill='tozeroy',
+                        fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.08,)}",
                         showlegend=False,
-                        hovertemplate=(
-                            f"<b>{drug}</b><br>"
-                            "Time: %{x:.0f}h<br>"
-                            "MIC Coverage: %{y:.1f}%<extra></extra>"
-                        )
+                        hovertemplate=(f"<b>{drug}</b> (tier A)<br>Time: %{{x:.0f}}h<br>"
+                                       "Coverage: %{y:.1f}%<extra></extra>")
+                    ), row=2, col=1)
+                else:
+                    # Tier B: relative exposure f(t)*100 on the bottom subplot only.
+                    # Never plotted as an absolute concentration on top (§3.4).
+                    intra = stats["intracellular_t_half"]
+                    frac = np.exp(-(math.log(2) / intra) * time_array) * 100
+                    fig.add_trace(go.Scatter(
+                        x=time_array, y=frac, mode='lines', name=f"{drug} exposure",
+                        line=dict(width=2, dash='dash', color=color),
+                        hovertemplate=(f"<b>{drug}</b> (tier B, {stats.get('active_moiety', '')})<br>"
+                                       "Time: %{x:.0f}h<br>"
+                                       "Exposure: %{y:.1f}% of steady state<extra></extra>")
                     ), row=2, col=1)
 
-            # 100% MIC reference on subplot 2
+            # 100% reference on subplot 2
             fig.add_trace(go.Scatter(
                 x=[0, t_max_hours], y=[100, 100],
-                mode='lines', name="100% MIC",
+                mode='lines', name="100%",
                 line=dict(width=1, dash='dot', color='#475569'),
                 showlegend=False, hoverinfo='skip'
             ), row=2, col=1)
@@ -1391,15 +1387,30 @@ elif app_view == "Patient Assessment Dashboard":
             )
             fig.update_yaxes(
                 gridcolor="#0f2237", zerolinecolor="#1e3a5f",
-                title_text="% MIC Coverage", row=2, col=1
+                title_text="% exposure / coverage", row=2, col=1
             )
 
-            st.plotly_chart(fig, width="stretch")
+            if curve_suppressed:
+                st.markdown(f"""
+                <div class='alert-warning'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       DECAY CURVE SUPPRESSED — AGE BELOW {curve_min_age} MONTHS
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        The allometric half-life model is not applicable below {curve_min_age} months
+                        of age (UGT1A1 maturation, methodology &sect;5.6), so no decay curve is shown.
+                        Dolutegravir dosing still follows the WHO weight-band lookup in the Clinical
+                        Directives tab. Refer to specialist paediatric guidance.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.plotly_chart(fig, width="stretch")
 
         with col_status:
             st.markdown("<p class='section-header'>Drug Status Panel</p>", unsafe_allow_html=True)
 
-            for drug in active_drugs:
+            for drug in (active_drugs if not curve_suppressed else []):
                 stats = pk_db.get(drug)
                 if not stats:
                     continue
@@ -1467,6 +1478,12 @@ elif app_view == "Patient Assessment Dashboard":
                 else:
                     status_html = "<span class='status-critical'>CLEARED</span>"
 
+                # Below the LLOQ, show the honest label rather than a spurious number (§4.6).
+                if lloq_flags.get(drug):
+                    level_html = "below limit of quantification"
+                else:
+                    level_html = f"{lvl:.4f} mg/L"
+
                 st.markdown(f"""
                 <div class='metric-card' style='margin-bottom:0.6rem;'>
                     <div style='display:flex; justify-content:space-between; align-items:center;
@@ -1476,7 +1493,7 @@ elif app_view == "Patient Assessment Dashboard":
                     </div>
                     <div style='font-size:0.72rem; color:#64748b;'>Plasma Level</div>
                     <div style='font-size:1.3rem; font-weight:700; color:{stats["color"]};'>
-                        {lvl:.4f} mg/L
+                        {level_html}
                     </div>
                     <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
                         MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage
@@ -1714,61 +1731,108 @@ elif app_view == "Patient Assessment Dashboard":
         # ── TB / Rifampicin Alert ──
         if tb_coinfection:
             directives_fired += 1
-            st.markdown("""
+            rif = INTERACTIONS["rifampicin_dtg"]
+            st.markdown(f"""
             <div class='alert-critical'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   PROTOCOL ALERT — RIFAMPICIN-DTG INTERACTION
+                   PROTOCOL ALERT — RIFAMPICIN–DTG INTERACTION
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
                     Patient is confirmed on <strong>Rifampicin</strong> for active TB co-infection.
-                    Rifampicin is a potent <strong>CYP3A4 inducer</strong> that reduces Dolutegravir
-                    plasma AUC by approximately <strong>54%</strong>.<br><br>
-                   <strong>Mandatory Action:</strong> Increase Dolutegravir from
-                    <span style='color:#fca5a5;'>50mg once daily → 50mg TWICE DAILY</span> (BD).<br>
-                   <strong>Rationale:</strong> Standard clinical guidance for concurrent
-                    Rifampicin-based TB treatment and Dolutegravir-based ART.<br>
-                   <strong>Monitoring:</strong> Repeat viral load at 4 weeks post-adjustment.
-                    Do not use NVP-based regimens concurrently.
+                    Rifampicin induces <strong>UGT1A1, UGT1A9 and CYP3A4</strong>. Dolutegravir is
+                    metabolised principally by <strong>UGT1A1 glucuronidation</strong>, with CYP3A4
+                    contributing <strong>less than 10%</strong> — so this is chiefly a UGT1A1 effect,
+                    not CYP3A4 alone. Rifampicin reduces DTG plasma AUC by approximately
+                    <strong>54%</strong> (t½ ×{rif['multiplier']} → 6.4 h).<br><br>
+                   <strong>Mandatory Action:</strong> Increase Dolutegravir to
+                    <span style='color:#fca5a5;'>50 mg TWICE DAILY (BD)</span>. Twice-daily dosing with
+                    rifampicin achieves AUC/trough approximately 18–33% above once-daily without
+                    rifampicin. The decay curve is modelled on the BD schedule when this flag is set.<br>
+                   <strong>Monitoring:</strong> Repeat viral load at 4 weeks post-adjustment.<br>
+                   <span style='color:#94a3b8;'>Class A (Derived) &middot; {RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-        # ── Traditional Medicine Alert ──
-        if traditional_meds:
-            directives_fired += 1
-            st.markdown("""
-            <div class='alert-warning'>
+        # ── Rifampicin + EFV informational note (interaction removed, §5.2) ──
+        if tb_coinfection and "Efavirenz" in active_drugs:
+            st.markdown(f"""
+            <div class='alert-info'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   PHARMACOVIGILANCE ALERT — TRADITIONAL MEDICINE CYP450 INTERACTION
+                   RIFAMPICIN–EFAVIRENZ — NO DOSE ADJUSTMENT
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
-                    Patient is using traditional preparations containing compounds that interact
-                    with the <strong>CYP2C9 / CYP3A4</strong> enzymatic pathways (Hyperforin in St. John's Wort;
-                    Phytosterols in African Potato).<br><br>
-                   <strong>Effect:</strong> Accelerated Dolutegravir clearance. Estimated plasma
-                    concentration reduced by 30–40%.<br>
-                   <strong>Action:</strong> Counsel patient on cessation. If non-adherent to
-                    cessation, consider enhanced monitoring (3-monthly viral load).
+                    South African data support using efavirenz with rifampicin-based TB treatment
+                    <strong>without dose adjustment</strong>. The <strong>CYP2B6 516G&gt;T</strong>
+                    polymorphism, common locally and associated with higher efavirenz concentrations,
+                    is a larger determinant of exposure than the rifampicin interaction. The v4.0
+                    0.74 half-life multiplier has been removed (methodology &sect;5.2).<br>
+                    <span style='color:#94a3b8;'>Informational (Class B) &middot; {RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-        # ── Renal Alert ──
-        if "Moderate Impairment" in renal_function or "Severe Impairment" in renal_function:
+        # ── St John's Wort Alert (direction only, §5.3) ──
+        if st_johns_wort:
             directives_fired += 1
-            sev = "SEVERE RENAL IMPAIRMENT" if "Severe" in renal_function else "MODERATE RENAL IMPAIRMENT"
             st.markdown(f"""
             <div class='alert-warning'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   RENAL DOSE ADJUSTMENT REQUIRED — {sev}
+                   HERBAL INTERACTION — ST JOHN'S WORT
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
-                    Patient has <strong>{renal_function}</strong>.
-                    Tenofovir Disoproxil Fumarate (TDF) is renally cleared and is
-                    <strong>nephrotoxic at accumulating concentrations</strong>.<br><br>
-                   <strong>Action:</strong> {'Consider switching TDF → TAF (Tenofovir Alafenamide). TAF achieves equivalent efficacy at 10% the plasma concentration, reducing nephrotoxicity.' if 'Severe' in renal_function else 'Monitor eGFR monthly. Consider TAF switch if trajectory worsening. Avoid NSAIDs.'}<br>
-                   <strong>Monitor:</strong> Monthly urinary phosphate/creatinine ratio.
-                    Watch for Fanconi Syndrome.
+                    <strong>Hyperforin</strong> induces CYP3A4 and P-glycoprotein, which would tend to
+                    <strong>lower</strong> antiretroviral concentrations. The <strong>direction</strong>
+                    of effect is established; the <strong>magnitude for dolutegravir is not sourced</strong>,
+                    so no percentage is applied to the model (methodology &sect;5.3).<br>
+                   <strong>Action:</strong> Counsel on cessation; record use.<br>
+                    <span style='color:#94a3b8;'>Class B (direction only) &middot; {RULESET_FINGERPRINT}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── African Potato Alert (no modelled effect, §5.4) ──
+        if african_potato:
+            directives_fired += 1
+            st.markdown(f"""
+            <div class='alert-info'>
+                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                   HERBAL USE — AFRICAN POTATO (HYPOXIS HEMEROCALLIDEA)
+                </div>
+                <div style='font-size:0.82rem; line-height:1.7;'>
+                    The evidence base for <em>Hypoxis</em> is <strong>thinner than for St John's Wort</strong>,
+                    is largely <strong>in vitro</strong>, and is <strong>inconsistent on direction</strong>
+                    (some findings point towards inhibition, which would move concentrations the other way).
+                    <strong>No effect is modelled</strong> (methodology &sect;5.4).<br>
+                   <strong>Action:</strong> Record and discuss traditional medicine use as good practice.<br>
+                    <span style='color:#94a3b8;'>Class C (no modelled effect) &middot; {RULESET_FINGERPRINT}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Renal Safety Alert (eGFR; separate from the resistance model, §5.5) ──
+        if egfr < 60:
+            directives_fired += 1
+            severe = egfr < 30
+            sev = "SEVERE (eGFR <30)" if severe else "MODERATE (eGFR 30–59)"
+            action = ("Consider switching TDF → TAF (tenofovir alafenamide), which achieves "
+                      "equivalent efficacy at roughly 10% of the plasma concentration."
+                      if severe else
+                      "Monitor eGFR monthly; consider a TAF switch if the trajectory worsens; avoid NSAIDs.")
+            st.markdown(f"""
+            <div class='alert-warning'>
+                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                   RENAL SAFETY ALERT — {sev}
+                </div>
+                <div style='font-size:0.82rem; line-height:1.7;'>
+                    eGFR <strong>{egfr} mL/min/1.73m²</strong>. This is a
+                    <strong>safety alert, separate from the resistance model</strong>: the concern with
+                    tenofovir in renal impairment is <strong>accumulation nephrotoxicity, not loss of
+                    efficacy</strong> (methodology &sect;5.5). Half-life is not scaled here, because the
+                    per-drug renally-cleared fraction is unsourced.<br>
+                   <strong>Action:</strong> {action}<br>
+                   <strong>Monitor:</strong> Monthly urinary phosphate/creatinine ratio; watch for Fanconi syndrome.<br>
+                    <span style='color:#94a3b8;'>Class C (safety) &middot; {RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2375,9 +2439,10 @@ ACTIVE MODIFIERS
 
 CLINICAL DIRECTIVES
 -------------------
-TB Co-infection: {"YES – DTG dose doubling required" if tb_coinfection else "No"}
-Traditional Medicine: {"YES – CYP450 interaction warning" if traditional_meds else "No"}
-Renal Status: {renal_function}
+TB Co-infection: {"YES – DTG 50 mg BD (rifampicin, UGT1A1)" if tb_coinfection else "No"}
+St John's Wort: {"YES – direction only, no magnitude" if st_johns_wort else "No"}
+African Potato: {"YES – no modelled effect; counsel" if african_potato else "No"}
+Renal (eGFR): {egfr} mL/min/1.73m2 {"— safety alert" if egfr < 60 else ""}
 Paediatric Protocol: {"YES – Weight-band dosing active" if paediatric else "No"}
 
 ADHERENCE RISK

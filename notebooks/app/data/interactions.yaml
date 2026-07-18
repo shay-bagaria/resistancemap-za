@@ -1,9 +1,10 @@
-# ResistanceMap ZA — half-life modifier constants
-# Relocated verbatim from calculate_adjusted_half_life() (methodology section 5).
-# Stage 2 only moves these constants out of Python; the arithmetic is unchanged.
-# `status: active` entries change behaviour now. `status: pending_removal` entries
-# record what v4.0 currently applies and name the methodology section that governs
-# their replacement in a later stage; their behaviour is unchanged in Stage 2.
+# ResistanceMap ZA — half-life modifier constants (methodology section 5).
+# Stage 3 actions the pending_removal items from Stage 2. `status` values:
+#   active        — applied to the half-life
+#   direction_only — qualitative warning, multiplier 1.0 (no magnitude)
+#   no_effect     — recorded, multiplier 1.0, not applied
+#   removed       — deleted from the model, kept here as a record
+#   disabled      — scaling defined but switched off pending an unsourced input
 
 ruleset_version: "0.5.0"
 schema_version: "1.0"
@@ -12,120 +13,117 @@ interactions:
   - id: rifampicin_dtg
     trigger: rifampicin
     drug: Dolutegravir
-    multiplier: 0.50
+    multiplier: 0.46
     classification: A
     status: active
     methodology_section: "5.1"
-    source: "Rifampicin reduces DTG AUC ~54% via UGT1A1 (principal) and CYP3A4 (<10%)."
-    derived_multiplier: 0.46
-    note: >-
-      v4.0 applies 0.50 (14 h -> 7.0 h). Section 5.1 derives 0.46 (-> 6.4 h) from
-      the 54% AUC reduction and also switches DTG to twice-daily dosing on the
-      plotted curve. Stage 3 makes both changes.
-    display_name: "Rifampicin CYP3A4 Induction"
-    display_desc: "−50% DTG half-life"
-    alert: "Increase dolutegravir to 50 mg twice daily with rifampicin."
+    mechanism: "UGT1A1 principal; CYP3A4 minor (<10%). Rifampicin induces UGT1A1, UGT1A9 and CYP3A4."
+    source: "Rifampicin reduces DTG AUC ~54% (AUC_rif/AUC_ctrl = 0.46)."
+    derivation: >-
+      AUC is proportional to 1/CL. AUC_rif/AUC_ctrl = 0.46 => CL_rif/CL_ctrl =
+      1/0.46 = 2.174. With volume unchanged, t-half is proportional to 1/CL, so
+      t-half_rif/t-half_ctrl = 0.46, giving 14 h * 0.46 = 6.44 h.
+    schedule: BD
+    dosing_interval_h: 12
+    schedule_note: >-
+      Management is dolutegravir 50 mg twice daily. Twice-daily with rifampicin
+      achieves AUC/trough ~18-33% above once-daily without rifampicin. The curve is
+      annotated BD; the model does not simulate the inter-dose sawtooth (section 3.2).
+    display_name: "Rifampicin–DTG (UGT1A1 induction)"
+    display_desc: "−54% DTG AUC → t½ ×0.46"
 
   - id: rifampicin_efv
     trigger: rifampicin
     drug: Efavirenz
-    multiplier: 0.74
+    multiplier: 1.0
     classification: C
-    status: pending_removal
+    status: removed
     methodology_section: "5.2"
     source: "Not supported by South African data (Cohen et al., PMC3837290)."
     note: >-
-      Section 5.2: SA data support no dose adjustment; CYP2B6 516G>T is the dominant
-      determinant of EFV exposure locally. Stage 3 removes this multiplier.
-    display_name: "Rifampicin CYP3A4 Induction"
-    display_desc: "−26% EFV half-life"
-    alert: "No EFV dose adjustment for rifampicin in SA populations (informational)."
+      v4.0 applied 0.74. Removed in Stage 3: SA data support no EFV dose adjustment
+      with rifampicin; CYP2B6 516G>T is the dominant determinant of EFV exposure
+      locally, more so than the rifampicin interaction.
+    display_name: "Rifampicin–EFV"
+    display_desc: "no dose adjustment (informational)"
 
   - id: sjw_dtg
-    trigger: traditional_meds
+    trigger: st_johns_wort
     herb: "St John's Wort"
     drug: Dolutegravir
-    multiplier: 0.65
+    multiplier: 1.0
     classification: B
-    status: pending_removal
+    status: direction_only
     methodology_section: "5.3"
-    source: "Direction established (hyperforin induces CYP3A4/P-gp); magnitude unsourced — TODO."
-    note: "Section 5.3: direction only, magnitude not sourced. Stage 3 shows direction, not a percentage."
-    display_name: "Traditional Medicine CYP450"
-    display_desc: "−35% DTG half-life"
-    alert: "Counsel on St John's Wort interaction (direction of effect only)."
+    source: "Hyperforin induces CYP3A4/P-gp; direction established, magnitude unsourced — TODO."
+    note: "Stage 3: qualitative warning only, no percentage applied to the half-life."
+    display_name: "St John's Wort–DTG"
+    display_desc: "induction — direction only, no magnitude"
 
   - id: sjw_efv
-    trigger: traditional_meds
+    trigger: st_johns_wort
     herb: "St John's Wort"
     drug: Efavirenz
-    multiplier: 0.70
+    multiplier: 1.0
     classification: B
-    status: pending_removal
+    status: direction_only
     methodology_section: "5.3"
-    source: "Direction established (hyperforin induces CYP3A4/P-gp); magnitude unsourced — TODO."
-    note: "Section 5.3: direction only, magnitude not sourced. Stage 3 shows direction, not a percentage."
-    display_name: "Traditional Medicine CYP450"
-    display_desc: "−30% EFV half-life"
-    alert: "Counsel on St John's Wort interaction (direction of effect only)."
+    source: "Hyperforin induces CYP3A4/P-gp; direction established, magnitude unsourced — TODO."
+    note: "Stage 3: qualitative warning only, no percentage applied to the half-life."
+    display_name: "St John's Wort–EFV"
+    display_desc: "induction — direction only, no magnitude"
 
-  # African Potato currently shares the St John's Wort multiplier through a single
-  # combined "traditional medicine" toggle in v4.0. Recorded here for completeness;
-  # not applied separately (applied: false) so the arithmetic is unchanged.
-  - id: african_potato_dtg
-    trigger: traditional_meds
+  - id: african_potato
+    trigger: african_potato
     herb: "African Potato (Hypoxis hemerocallidea)"
-    drug: Dolutegravir
-    multiplier: 0.65
-    shares_multiplier_with: sjw_dtg
-    applied: false
+    drugs: [Dolutegravir, Efavirenz]
+    multiplier: 1.0
     classification: C
-    status: pending_removal
+    status: no_effect
     methodology_section: "5.4"
-    source: "Evidence thin, largely in vitro, not consistently supporting induction."
-    note: "Section 5.4: shares the SJW multiplier in v4.0. Stage 3 sets to 1.0 (no modelled effect) and keeps a counselling prompt."
-    display_name: "Traditional Medicine CYP450"
-    display_desc: "−35% DTG half-life"
-
-  - id: african_potato_efv
-    trigger: traditional_meds
-    herb: "African Potato (Hypoxis hemerocallidea)"
-    drug: Efavirenz
-    multiplier: 0.70
-    shares_multiplier_with: sjw_efv
-    applied: false
-    classification: C
-    status: pending_removal
-    methodology_section: "5.4"
-    source: "Evidence thin, largely in vitro, not consistently supporting induction."
-    note: "Section 5.4: shares the SJW multiplier in v4.0. Stage 3 sets to 1.0 (no modelled effect) and keeps a counselling prompt."
-    display_name: "Traditional Medicine CYP450"
-    display_desc: "−30% EFV half-life"
+    source: "Evidence thin, largely in vitro, inconsistent on direction (some points to inhibition)."
+    note: "Stage 3: no modelled effect (multiplier 1.0). Counselling prompt retained."
+    display_name: "African Potato"
+    display_desc: "no modelled effect; record and counsel"
 
   - id: renal_tdf_3tc
     trigger: renal
     drugs: [Tenofovir, Lamivudine]
-    multipliers:
-      mild: 1.15        # Mild Impairment (60-89 mL/min)
-      moderate: 1.40    # Moderate Impairment (30-59 mL/min)
-      severe: 1.85      # Severe Impairment (<30 mL/min)
+    egfr_reference: 90
+    scaling: "t_half_pt = t_half_norm * (egfr_reference / egfr_pt)"
+    scaling_enabled: false
+    fraction_renally_cleared:
+      Tenofovir:
+        value: null
+        source: "TODO — UNVERIFIED"
+      Lamivudine:
+        value: null
+        source: "TODO — UNVERIFIED"
     classification: C
-    status: pending_removal
+    status: disabled
     methodology_section: "5.5"
-    source: "No traced source for the fixed per-category coefficients."
-    note: "Section 5.5: replaced by eGFR scaling (t-half x eGFR_ref/eGFR) with a per-drug renally-cleared fraction in Stage 3."
-    display_name: "Renal Clearance Delay"
+    source: "Per-drug renally-cleared fraction is unsourced (section 5.5)."
+    note: >-
+      Stage 3: the fixed per-category multipliers are removed. eGFR scaling needs a
+      per-drug renally-cleared fraction, which is unsourced, so half-life scaling is
+      DISABLED (renal does not modify the resistance model). Renal is presented as a
+      standalone accumulation-nephrotoxicity safety alert (section 5.5).
+    display_name: "Renal"
 
   - id: paediatric_weight
     trigger: paediatric
     scope: all
-    model: linear
-    weight_reference_kg: 35
-    floor: 0.6
-    cap: 1.0
+    model: allometric
+    reference_weight_kg: 70
+    exponent: 0.25
+    curve_min_age_months: 6
     classification: B
-    status: pending_removal
+    status: active
     methodology_section: "5.6"
-    source: "Linear W/35, floored at 0.6, capped at 1.0. No paediatric-PK basis."
-    note: "Section 5.6: replaced by allometric (W/70)^0.25 in Stage 3."
-    display_name: "Paediatric Weight-Band"
+    source: "Allometric scaling: t-half_child = t-half_adult * (W/70)^0.25 (section 5.6)."
+    note: >-
+      Replaces the v4.0 linear W/35 factor. At 15 kg gives 0.68 vs the linear 0.43.
+      Below curve_min_age_months the allometric model is not applicable (UGT1A1
+      maturation) and the decay curve is suppressed as well as leaving dosing to the
+      WHO band lookup.
+    display_name: "Paediatric Weight-Band (allometric)"
