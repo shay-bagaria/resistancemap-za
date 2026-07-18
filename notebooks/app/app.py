@@ -1140,9 +1140,11 @@ elif app_view == "Patient Assessment Dashboard":
                 fig.add_vline(
                     x=hours_missed, row="all",
                     line_width=2, line_dash="solid", line_color="#ef4444",
-                    annotation_text=f"  NOW ({days_missed}d defaulted)",
+                    annotation_text=f"NOW ({days_missed}d defaulted)",
+                    annotation_position="top left",
                     annotation_font_color="#ef4444",
-                    annotation_font_size=11
+                    annotation_font_size=11,
+                    annotation_yshift=10
                 )
 
             # Resistance window shading
@@ -1153,6 +1155,7 @@ elif app_view == "Patient Assessment Dashboard":
                 annotation_position="top right",
                 annotation_font_color="#ef4444",
                 annotation_font_size=10,
+                annotation_yshift=-12,
                 row=1, col=1
             )
 
@@ -1168,7 +1171,7 @@ elif app_view == "Patient Assessment Dashboard":
                     x=0.01, y=0.99
                 ),
                 hovermode="x unified",
-                margin=dict(l=0, r=0, t=35, b=0),
+                margin=dict(l=0, r=0, t=48, b=0),
                 height=520
             )
             fig.update_xaxes(
