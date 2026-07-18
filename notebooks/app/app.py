@@ -1,6 +1,6 @@
 # ============================================================
-# ResistanceMap ZA OS | Enterprise CDSS Frontend v4.0
-# KwaZulu-Natal Department of Health | Clinical Decision Support
+# ResistanceMap ZA OS | CDSS Frontend v5.0
+# Research prototype — not an approved medical device
 # ============================================================
 
 import streamlit as st
@@ -20,6 +20,7 @@ import yaml
 # ============================================================
 # DATA BUNDLE LOADING (versioned rules, methodology section 13.2)
 # ============================================================
+APP_VERSION = "5.0"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 SAST = ZoneInfo("Africa/Johannesburg")
 
@@ -41,6 +42,28 @@ RULESET_VERSION = RULES.get("ruleset_version", "unknown")
 RULES_HASH = file_sha256("rules.yaml")
 
 
+def _validate_rules(rules):
+    """Fail loudly on a malformed rules bundle rather than mis-dosing silently."""
+    ped = rules.get("paediatric_dtg_dosing")
+    if not isinstance(ped, dict):
+        return "rules.yaml: 'paediatric_dtg_dosing' section is missing or malformed."
+    bands = ped.get("bands")
+    if not isinstance(bands, list) or not bands:
+        return "rules.yaml: 'paediatric_dtg_dosing.bands' is missing or empty."
+    for i, band in enumerate(bands):
+        if "min_kg" not in band or "max_kg" not in band:
+            return f"rules.yaml: band {i} is missing min_kg/max_kg."
+        if not band.get("doses"):
+            return f"rules.yaml: band {i} ({band.get('label', '?')}) has no doses."
+    return None
+
+
+_rules_error = _validate_rules(RULES)
+if _rules_error:
+    st.error(_rules_error)
+    st.stop()
+
+
 def chain_entry(prev_hash, entry):
     """Return the SHA-256 chain hash of an audit entry (methodology section 13.2).
 
@@ -55,19 +78,51 @@ def chain_entry(prev_hash, entry):
 GENESIS_HASH = "0" * 64
 
 
-def paediatric_dtg_band(weight_kg):
-    """Return (band, config) for the WHO dolutegravir weight band containing weight_kg.
+def paediatric_dtg_band(weight_kg, age_months=None):
+    """Resolve the WHO dolutegravir dose for a weight and age (methodology section 6).
 
-    Returns the band dict with its true lower and upper boundaries, so callers
-    do not have to compute the next threshold arithmetically (methodology section 6).
+    Returns (result, config). result is a dict with:
+      status: one of "ok", "weight_below_bands", "age_below_coverage",
+              "age_required", "age_outside_coverage"
+      band:   the matched weight band dict (or None), carrying true boundaries
+      dose:   the matched dose dict (or None)
+
+    The 6 to <10 kg band is age-dependent (IMPAACT P1093): 10 mg from four weeks
+    to under six months, 15 mg from six months. Other bands are age-independent.
     """
     cfg = RULES["paediatric_dtg_dosing"]
-    for band in cfg["bands"]:
-        lo = band["min_kg"]
-        hi = band["max_kg"]
+    min_age = cfg.get("minimum_age_months", 1)
+
+    band = None
+    for b in cfg["bands"]:
+        lo, hi = b["min_kg"], b["max_kg"]
         if weight_kg >= lo and (hi is None or weight_kg < hi):
-            return band, cfg
-    return None, cfg
+            band = b
+            break
+    if band is None:
+        return {"status": "weight_below_bands", "band": None, "dose": None}, cfg
+
+    doses = band["doses"]
+    age_dependent = any(
+        "min_age_months" in d or "max_age_months" in d for d in doses
+    )
+
+    # Below the source table's youngest age, show no dose regardless of band.
+    if age_months is not None and age_months < min_age:
+        return {"status": "age_below_coverage", "band": band, "dose": None}, cfg
+
+    if not age_dependent:
+        return {"status": "ok", "band": band, "dose": doses[0]}, cfg
+
+    if age_months is None:
+        return {"status": "age_required", "band": band, "dose": None}, cfg
+
+    for d in doses:
+        lo = d.get("min_age_months", 0)
+        hi = d.get("max_age_months")
+        if age_months >= lo and (hi is None or age_months < hi):
+            return {"status": "ok", "band": band, "dose": d}, cfg
+    return {"status": "age_outside_coverage", "band": band, "dose": None}, cfg
 
 # ============================================================
 # 1. ENTERPRISE PAGE CONFIGURATION & GLOBAL STYLING
@@ -470,10 +525,10 @@ if app_view == "About ResistanceMap ZA":
 
     # ── Plain English Footer ──
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color: #475569; line-height:2;'>
-        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Open Source Public Health System Framework<br>
+        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Open Source Public Health System Framework<br>
         Contact: sbagaria2009@gmail.com<br>
         Prototype for educational and research use only. Not an approved medical device.
     </div>
@@ -673,10 +728,10 @@ elif app_view == "Understanding Your Results":
 
     # ── Footer ──
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color: #475569; line-height:2;'>
-        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Patient Education Module<br>
+        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Patient Education Module<br>
         Written in plain language for patients living with HIV in KwaZulu-Natal<br>
         This tool does not replace your doctor. Always follow your healthcare team's advice.
     </div>
@@ -693,14 +748,14 @@ elif app_view == "Patient Assessment Dashboard":
 
     with st.sidebar:
         # ── Logo Block ──
-        st.markdown("""
+        st.markdown(f"""
         <div style='text-align:center; padding: 0.5rem 0 1rem 0;'>
             <div style='font-size:1.1rem; font-weight:700; color:#e2e8f0; letter-spacing:0.05em;'>
                 ResistanceMap ZA
             </div>
             <div style='font-size:0.65rem; color:#3b82f6; text-transform:uppercase;
                         letter-spacing:0.15em; margin-top:0.2rem;'>
-                Enterprise CDSS v4.0
+                CDSS v{APP_VERSION}
             </div>
             <div style='font-size:0.6rem; color:#475569; margin-top:0.3rem;'>
                 Educational Prototype
@@ -725,8 +780,10 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Patient Identity ──
         st.markdown("<p class='section-header'>Patient Identity</p>", unsafe_allow_html=True)
 
-        patient_id = st.text_input("Anonymised Patient ID", "KZN-8842-A",
-                                    help="Anonymised demo identifier — no real patient data.")
+        patient_id = st.text_input("Pseudonymised Patient ID", "KZN-8842-A",
+                                    help="Pseudonymous reference only. Pseudonymised health data "
+                                         "remains personal information under POPIA (methodology 15). "
+                                         "Demo data only — no real patient information.")
 
         facility = st.selectbox("Treating Facility",
             ["King Edward VIII Hospital – Durban",
@@ -737,7 +794,7 @@ elif app_view == "Patient Assessment Dashboard":
              "Prince Mshiyeni Memorial Hospital",
              "RK Khan Hospital"])
 
-        clinician = st.text_input("Clinician (Anonymised Code)", "DR-KZN-0044")
+        clinician = st.text_input("Clinician (Pseudonymised Code)", "DR-KZN-0044")
 
         # Escape free-text before it is interpolated into any unsafe_allow_html markup.
         patient_id_safe = html.escape(patient_id)
@@ -769,8 +826,13 @@ elif app_view == "Patient Assessment Dashboard":
 
         if paediatric:
             weight_kg = st.slider("Patient Weight (kg)", 3, 40, 15)
+            age_months = st.number_input(
+                "Patient Age (months)", 0, 216, 24,
+                help="Used for the 6 to <10 kg dolutegravir dose split "
+                     "(10 mg from 4 weeks to <6 months, 15 mg from 6 months; IMPAACT P1093).")
         else:
             weight_kg = 70
+            age_months = None
 
         st.markdown("<p class='section-header'>Adherence Data</p>", unsafe_allow_html=True)
 
@@ -798,13 +860,13 @@ elif app_view == "Patient Assessment Dashboard":
     # ── PK Database (Stanford HIVdb aligned) ──
     pk_db = {
         "Tenofovir": {
-            "t_half": 17.0, "c_max": 0.30, "mic": 0.05,
+            "t_half": 17.0, "c_max": 0.30, "threshold_mg_L": 0.05,
             "mutation": "K65R", "class": "NRTI",
             "cross_resistance": ["K70E", "K70R"],
             "renal_sensitive": True, "color": "#3b82f6"
         },
         "Lamivudine": {
-            "t_half": 5.0,  "c_max": 1.50, "mic": 0.50,
+            "t_half": 5.0,  "c_max": 1.50, "threshold_mg_L": 0.50,
             "mutation": "M184V", "class": "NRTI",
             "cross_resistance": ["M184I"],
             "renal_sensitive": True, "color": "#f59e0b"
@@ -812,7 +874,8 @@ elif app_view == "Patient Assessment Dashboard":
         "Dolutegravir": {
             # Threshold corrected v4.0 -> v5.0: 0.50 -> 0.064 mg/L PA-IC90 (wild type),
             # Cottrell, Hadzic & Kashuba, Clin Pharmacokinet 2013;52(11):981-94. Methodology 4.1.
-            "t_half": 14.0, "c_max": 3.30, "mic": 0.064,  # c_max sourcing deferred to Stage 2 (methodology 4.1 lists 2.34)
+            # c_max 2.34 mg/L (IQR 1.84-3.04), steady-state median, NCT02924389 (methodology 4.1).
+            "t_half": 14.0, "c_max": 2.34, "threshold_mg_L": 0.064,
             "secondary_threshold": 0.30, "secondary_label": "EC90",  # Wasserman et al., AAC 2022;66(7)
             "mutation": "R263K", "class": "INSTI",
             "cross_resistance": ["G118R", "E138K/A/T", "Q148R"],
@@ -822,14 +885,14 @@ elif app_view == "Patient Assessment Dashboard":
             # Threshold corrected v4.0 -> v5.0: 0.51 -> 1.0 mg/L lower therapeutic limit,
             # Kappelhoff et al., Clin Pharmacokinet 2007;46(2):93-108. Methodology 4.2.
             # c_max 4.07 and t_half 52 h remain UNVERIFIED (methodology 4.2, 18) — unchanged pending sourcing.
-            "t_half": 52.0, "c_max": 4.07, "mic": 1.0,
+            "t_half": 52.0, "c_max": 4.07, "threshold_mg_L": 1.0,
             "secondary_threshold": 0.70, "secondary_label": "SA cohort (Sinxadi 2016)",
             "mutation": "K103N", "class": "NNRTI",
             "cross_resistance": ["Y181C", "G190A", "V106M"],
             "renal_sensitive": False, "color": "#a855f7"
         },
         "Abacavir": {
-            "t_half": 1.5, "c_max": 3.0, "mic": 0.26,
+            "t_half": 1.5, "c_max": 3.0, "threshold_mg_L": 0.26,
             "mutation": "L74V", "class": "NRTI",
             "cross_resistance": ["Y115F", "M184V"],
             "renal_sensitive": False, "color": "#ec4899"
@@ -910,13 +973,13 @@ elif app_view == "Patient Assessment Dashboard":
     vulnerable_drugs = [
         d for d in active_drugs
         if d in current_levels
-        and (pk_db[d]["mic"] * 0.05) < current_levels[d] < pk_db[d]["mic"]
+        and (pk_db[d]["threshold_mg_L"] * 0.05) < current_levels[d] < pk_db[d]["threshold_mg_L"]
     ]
 
     below_mic_drugs = [
         d for d in active_drugs
         if d in current_levels
-        and current_levels[d] < pk_db[d]["mic"]
+        and current_levels[d] < pk_db[d]["threshold_mg_L"]
     ]
 
     # ── Global Risk Score (0–100) ──
@@ -958,7 +1021,7 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 <div style='font-size:0.72rem; color:#3b82f6; letter-spacing:0.12em;
                             text-transform:uppercase;'>
-                    Clinical Decision Support System &nbsp;·&nbsp; Enterprise v4.0
+                    Clinical Decision Support System &nbsp;·&nbsp; v{APP_VERSION}
                 </div>
             </div>
         </div>
@@ -1087,7 +1150,7 @@ elif app_view == "Patient Assessment Dashboard":
                 adj_t = adjusted_halves[drug]
                 k_e   = math.log(2) / adj_t
                 decay = stats["c_max"] * np.exp(-k_e * time_array)
-                mic_pct = (decay / stats["mic"]) * 100
+                mic_pct = (decay / stats["threshold_mg_L"]) * 100
 
                 color = stats["color"]
 
@@ -1106,7 +1169,7 @@ elif app_view == "Patient Assessment Dashboard":
                 # Primary efficacy threshold line
                 fig.add_trace(go.Scatter(
                     x=[0, t_max_hours],
-                    y=[stats["mic"], stats["mic"]],
+                    y=[stats["threshold_mg_L"], stats["threshold_mg_L"]],
                     mode='lines', name=f"{drug} threshold",
                     line=dict(width=1.2, dash='dot', color=color),
                     opacity=0.5,
@@ -1211,7 +1274,7 @@ elif app_view == "Patient Assessment Dashboard":
                 if not stats:
                     continue
                 lvl = current_levels[drug]
-                mic = stats["mic"]
+                mic = stats["threshold_mg_L"]
                 pct = (lvl / mic) * 100
                 adj_t = adjusted_halves[drug]
 
@@ -1295,7 +1358,7 @@ elif app_view == "Patient Assessment Dashboard":
                 if not stats or drug not in current_levels:
                     continue
                 lvl = current_levels[drug]
-                mic = stats["mic"]
+                mic = stats["threshold_mg_L"]
                 ratio = lvl / mic
 
                 # Ordinal selection-pressure label (direction only, no probability).
@@ -1501,9 +1564,7 @@ elif app_view == "Patient Assessment Dashboard":
                    <strong>Effect:</strong> Accelerated Dolutegravir clearance. Estimated plasma
                     concentration reduced by 30–40%.<br>
                    <strong>Action:</strong> Counsel patient on cessation. If non-adherent to
-                    cessation, consider enhanced monitoring (3-monthly viral load).<br>
-                   <strong>Note:</strong> African Potato (Hypoxis hemerocallidea) additionally
-                    suppresses bone marrow — monitor FBC if patient is on TDF.
+                    cessation, consider enhanced monitoring (3-monthly viral load).
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1531,26 +1592,21 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Paediatric Alert ──
         if paediatric:
             directives_fired += 1
-            band, ped_cfg = paediatric_dtg_band(weight_kg)
-            min_age = ped_cfg.get("minimum_age_months", 6)
+            result, ped_cfg = paediatric_dtg_band(weight_kg, age_months)
+            status = result["status"]
+            band = result["band"]
+            min_age = ped_cfg.get("minimum_age_months", 1)
+            class_line = (
+                f"<span style='color:#94a3b8;'>Class A (Derived) &middot; "
+                f"ruleset v{RULESET_VERSION}</span>"
+            )
+            age_display = f"{age_months} months" if age_months is not None else "not entered"
 
-            if band is None:
-                st.markdown(f"""
-                <div class='alert-warning'>
-                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                       PAEDIATRIC DOSING — WEIGHT BELOW LOWEST BAND
-                    </div>
-                    <div style='font-size:0.82rem; line-height:1.7;'>
-                        Patient weight <strong>{weight_kg} kg</strong> is below the lowest WHO
-                        weight band. No modelled dose is shown. Refer to current paediatric
-                        guidelines and specialist advice.<br>
-                        <span style='color:#94a3b8;'>Class A (Derived) &middot; ruleset v{RULESET_VERSION}</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                band_dose = html.escape(band["dose"])
+            if status == "ok":
+                dose = result["dose"]
+                band_dose = html.escape(dose["dose"])
                 band_label = html.escape(band.get("label", ""))
+                dose_source = html.escape(dose.get("source", band.get("label", "")))
                 hi = band["max_kg"]
                 if hi is None:
                     boundary_text = (
@@ -1560,7 +1616,7 @@ elif app_view == "Patient Assessment Dashboard":
                 else:
                     boundary_text = (
                         f"Current band: <strong>{band_label}</strong>. "
-                        f"The next dose change is due when the patient reaches <strong>{hi} kg</strong>."
+                        f"The next weight-based dose change is due at <strong>{hi} kg</strong>."
                     )
                 st.markdown(f"""
                 <div class='alert-info'>
@@ -1568,17 +1624,53 @@ elif app_view == "Patient Assessment Dashboard":
                        PAEDIATRIC WEIGHT-BAND DOSING PROTOCOL ACTIVE
                     </div>
                     <div style='font-size:0.82rem; line-height:1.7;'>
-                        Patient weight: <strong>{weight_kg} kg</strong>.
+                        Patient weight: <strong>{weight_kg} kg</strong> &middot; age: <strong>{age_display}</strong>.
                         WHO weight-band dosing for dolutegravir dispersible tablets:<br><br>
                        <strong>Recommended DTG Dose:</strong>
-                        <span style='color:#93c5fd; font-weight:700;'>{band_dose} once daily</span><br>
+                        <span style='color:#93c5fd; font-weight:700;'>{band_dose} once daily</span>
+                        <span style='color:#64748b;'>({dose_source})</span><br>
                        {boundary_text}<br>
-                       <strong>Age check:</strong> This model is not applicable below {min_age} months
-                        of age (UGT1A1 maturation). Confirm age &ge; 6 months before applying the
-                        6 to &lt;10 kg band.<br>
                        <strong>Volume check:</strong> Confirm dispersible tablet formulation.
                         Do not substitute adult film-coated tablet below 20 kg.<br>
-                        <span style='color:#94a3b8;'>Class A (Derived) &middot; ruleset v{RULESET_VERSION}</span>
+                        {class_line}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                if status == "weight_below_bands":
+                    headline = "PAEDIATRIC DOSING — WEIGHT BELOW LOWEST BAND"
+                    body = (
+                        f"Patient weight <strong>{weight_kg} kg</strong> is below the lowest "
+                        f"WHO weight band (3 kg)."
+                    )
+                elif status == "age_below_coverage":
+                    headline = "PAEDIATRIC DOSING — AGE BELOW SOURCE COVERAGE"
+                    body = (
+                        f"Patient age <strong>{age_display}</strong> is below four weeks. "
+                        f"The dosing table used here does not cover neonates."
+                    )
+                elif status == "age_required":
+                    headline = "PAEDIATRIC DOSING — AGE REQUIRED"
+                    body = (
+                        f"Weight <strong>{weight_kg} kg</strong> falls in an age-dependent band "
+                        f"(6 to &lt;10 kg). Enter the patient's age in months to resolve the dose "
+                        f"(10 mg below six months, 15 mg from six months)."
+                    )
+                else:  # age_outside_coverage
+                    headline = "PAEDIATRIC DOSING — AGE OUTSIDE SOURCE COVERAGE"
+                    body = (
+                        f"No modelled dose is available for weight <strong>{weight_kg} kg</strong> "
+                        f"at age <strong>{age_display}</strong>."
+                    )
+                st.markdown(f"""
+                <div class='alert-warning'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       {headline}
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        {body} No modelled dose is shown. Refer to current paediatric guidelines
+                        and specialist advice.<br>
+                        {class_line}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2027,8 +2119,10 @@ elif app_view == "Patient Assessment Dashboard":
         col_c1, col_c2, col_c3 = st.columns(3)
 
         design_notes = [
-            (col_c1, "Anonymised Demo Data",
-             "Patient identifiers in this prototype are anonymised placeholders. No real patient data is stored.",
+            (col_c1, "Pseudonymised Demo Data",
+             "Patient identifiers here are pseudonymous placeholders. Pseudonymised health data "
+             "remains personal information under POPIA (methodology §15); this build uses demo data "
+             "only, with no real patient information.",
              "#10b981"),
             (col_c2, "Guideline-Informed Logic",
              "Clinical directives are modelled on publicly available South African and WHO ART treatment guidance, for educational purposes only.",
@@ -2060,6 +2154,8 @@ elif app_view == "Patient Assessment Dashboard":
         report_text = f"""
 ResistanceMap ZA OS — Clinical Assessment Report
 ================================================
+Software: ResistanceMap ZA OS v{APP_VERSION} · ruleset v{RULESET_VERSION} · rules.yaml {RULES_HASH[:8]}
+Research prototype — not an approved medical device. Not for clinical use.
 Generated: {now.strftime("%d %B %Y %H:%M:%S")} SAST
 Patient ID: {patient_id}
 Facility: {facility}
@@ -2075,8 +2171,8 @@ DRUG LEVELS AT ASSESSMENT
 --------------------------
 """ + "\n".join([
             f"{drug}: {current_levels[drug]:.5f} mg/L "
-            f"(MIC={pk_db[drug]['mic']} | "
-            f"{'ABOVE' if current_levels[drug] >= pk_db[drug]['mic'] else 'BELOW'} MIC)"
+            f"(MIC={pk_db[drug]['threshold_mg_L']} | "
+            f"{'ABOVE' if current_levels[drug] >= pk_db[drug]['threshold_mg_L'] else 'BELOW'} MIC)"
             for drug in active_drugs if drug in current_levels
         ]) + f"""
 
@@ -2136,10 +2232,10 @@ AUDIT INTEGRITY
 
     # ── Footer ──
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color:#334155; line-height:2;'>
-        ResistanceMap ZA OS v4.0 &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
+        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
         Contact: sbagaria2009@gmail.com<br>
         <span style='color:#1e3a5f;'>
             Educational and research prototype only — not an approved medical device.

@@ -6,31 +6,49 @@ ruleset_version: "0.5.0"
 
 paediatric_dtg_dosing:
   classification: A            # Derived — WHO weight-band schedule, methodology section 6
-  minimum_age_months: 6        # Model not applicable below 6 months (UGT1A1 maturation, section 5.6)
+  # Below this age no modelled dose is shown: the source dosing table starts at
+  # four weeks of age (~1 month). Neonates <4 weeks fall outside coverage.
+  minimum_age_months: 1
   source: >-
     WHO weight-band recommendations for dolutegravir dispersible tablets, as
     reported in the combined IMPAACT P1093 and ODYSSEY population
     pharmacokinetic analysis (PENTA-ID) and the ODYSSEY dosing substudies
-    (Waalewijn et al., Lancet HIV 2020; Turkova et al., Lancet HIV 2022).
-  # max_kg is the exclusive upper boundary of the band; null means open-ended.
+    (Waalewijn et al., Lancet HIV 2020; Turkova et al., Lancet HIV 2022). The
+    age split within the 6 to <10 kg band follows the IMPAACT P1093 dosing
+    table (10 mg from four weeks to under six months; 15 mg from six months).
+  # max_kg is the exclusive upper boundary of the weight band; null is open-ended.
+  # Each band carries one or more doses. Where a dose depends on age, the entry
+  # carries min_age_months / max_age_months (max exclusive); an entry with no age
+  # bounds applies across the whole band (subject to minimum_age_months).
   bands:
     - label: "3 to <6 kg"
       min_kg: 3
       max_kg: 6
-      dose: "5 mg"
-    - label: "6 to <10 kg (>=6 months)"
+      doses:
+        - dose: "5 mg"
+    - label: "6 to <10 kg"
       min_kg: 6
       max_kg: 10
-      dose: "15 mg"
+      doses:
+        - dose: "10 mg"
+          min_age_months: 1
+          max_age_months: 6
+          source: "IMPAACT P1093 dosing table (4 weeks to <6 months)"
+        - dose: "15 mg"
+          min_age_months: 6
+          source: "WHO weight-band schedule (>=6 months)"
     - label: "10 to <14 kg"
       min_kg: 10
       max_kg: 14
-      dose: "20 mg"
+      doses:
+        - dose: "20 mg"
     - label: "14 to <20 kg"
       min_kg: 14
       max_kg: 20
-      dose: "25 mg"
+      doses:
+        - dose: "25 mg"
     - label: ">=20 kg"
       min_kg: 20
       max_kg: null
-      dose: "30 mg dispersible, or 50 mg film-coated tablet"
+      doses:
+        - dose: "30 mg dispersible, or 50 mg film-coated tablet"

@@ -1,5 +1,5 @@
-streamlit>=1.30
-pandas
+# st.plotly_chart(fig, width="stretch") requires a recent Streamlit; 1.30 is too low.
+streamlit>=1.58.0
 numpy
 plotly
 pyyaml
