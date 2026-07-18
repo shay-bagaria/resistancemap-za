@@ -179,6 +179,7 @@ def _internal_drug(d):
         entry["secondary_label"] = d["secondary_threshold_mg_L"].get("label", "secondary")
     if isinstance(d.get("intracellular_t_half_h"), dict):
         entry["intracellular_t_half"] = d["intracellular_t_half_h"]["value"]
+        entry["compartment"] = d["intracellular_t_half_h"].get("compartment", "Unknown")
     if isinstance(d.get("activity_fraction_cutoff"), dict):
         entry["activity_fraction_cutoff"] = d["activity_fraction_cutoff"]["value"]
     return entry
@@ -1130,15 +1131,32 @@ elif app_view == "Patient Assessment Dashboard":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Assessment Coverage Banner ──
+    tier_b_drugs = [d for d in active_drugs if pk_db.get(d, {}).get("tier") == "B"]
+    if tier_b_drugs:
+        excluded_str = " and ".join(tier_b_drugs).lower()
+        total_components = len(active_drugs)
+        included_components = total_components - len(tier_b_drugs)
+        st.markdown(f"""
+        <div class='alert-warning' style='margin-bottom:1rem;'>
+            <div style='font-weight:700; font-size:0.85rem;'>Partial Assessment Coverage ({included_components} of {total_components} components)</div>
+            <div style='font-size:0.78rem; margin-top:0.3rem;'>
+                {excluded_str.capitalize()} are modelled for exposure but do not contribute to the composite score pending the Stage 4 selection-pressure classification.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
     # ── Top KPI Strip ──
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
     with kpi1:
+        has_tier_b = len(tier_b_drugs) > 0
+        score_note = " &nbsp;·&nbsp; Partial assessment" if has_tier_b else ""
         st.markdown(f"""
         <div class='metric-card'>
             <h3>Resistance Risk Score</h3>
             <div class='metric-value' style='color:{risk_color};'>{risk_score}/100</div>
-            <div class='metric-delta' style='color:{risk_color};'>● {risk_label}</div>
+            <div class='metric-delta' style='color:{risk_color};'>● {risk_label}{score_note}</div>
         </div>""", unsafe_allow_html=True)
 
     with kpi2:
@@ -1413,10 +1431,18 @@ elif app_view == "Patient Assessment Dashboard":
                         status_html = "<span class='status-critical'>CLEARED</span>"
                     threshold_line = f"MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage"
                 else:
-                    # Tier B prodrug: plasma shown, but no plasma threshold (section 3.4).
+                    # Tier B prodrug: relative exposure (section 3.4).
                     status_html = "<span class='status-warning'>PRODRUG</span>"
-                    threshold_line = ("No plasma threshold — intracellular anabolite model "
-                                      "arrives in Stage 3 (&sect;3.4)")
+                    intracell_t_half = stats.get("intracellular_t_half", 48.0)
+                    compartment = stats.get("compartment", "Unknown")
+                    active_moiety = stats.get("active_moiety", "active moiety")
+                    k_e_intra = math.log(2) / intracell_t_half
+                    f_t = math.exp(-k_e_intra * hours_missed)
+                    threshold_line = (
+                        f"{f_t * 100:.1f}% of steady-state active-moiety exposure ({active_moiety})<br>"
+                        f"Intracellular t½: {intracell_t_half}h ({compartment})<br>"
+                        f"No inhibitory quotient is computed: no validated intracellular efficacy threshold exists in comparable units (&sect;3.4)."
+                    )
 
                 st.markdown(f"""
                 <div class='metric-card' style='margin-bottom:0.6rem;'>
