@@ -7,52 +7,67 @@ import streamlit as st
 import math
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 import datetime
-import time
-import random
-import os
+import hashlib
+import html
 import json
-import filelock
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import yaml
 
 # ============================================================
-# PERSISTENT VISITOR COUNTER LOGIC
+# DATA BUNDLE LOADING (versioned rules, methodology section 13.2)
 # ============================================================
-COUNTER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visitor_counter.json")
-COUNTER_LOCK = COUNTER_FILE + ".lock"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+SAST = ZoneInfo("Africa/Johannesburg")
 
-def get_and_increment_visitor_count():
-    """Read current count, increment by 1, save back. Thread-safe via file lock."""
-    lock = filelock.FileLock(COUNTER_LOCK, timeout=5)
-    with lock:
-        if os.path.exists(COUNTER_FILE):
-            with open(COUNTER_FILE, "r") as f:
-                data = json.load(f)
-        else:
-            data = {"count": 322}
-        
-        if data.get("count", 0) < 322:
-            data["count"] = 322
-            
-        data["count"] += 1
-        with open(COUNTER_FILE, "w") as f:
-            json.dump(data, f)
-    return data["count"]
 
-def get_visitor_count():
-    """Read current count without incrementing."""
-    if os.path.exists(COUNTER_FILE):
-        with open(COUNTER_FILE, "r") as f:
-            return max(json.load(f).get("count", 322), 322)
-    return 322
+@st.cache_data
+def load_yaml(filename):
+    """Load a versioned data file from the data directory."""
+    with open(DATA_DIR / filename, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
-# Increment once per unique session
-if "_visitor_counted" not in st.session_state:
-    st.session_state._visitor_counted = True
-    st.session_state._visitor_total = get_and_increment_visitor_count()
-else:
-    st.session_state._visitor_total = get_visitor_count()
+
+def file_sha256(filename):
+    """SHA-256 of a data file, used for the ruleset fingerprint and audit rows."""
+    return hashlib.sha256((DATA_DIR / filename).read_bytes()).hexdigest()
+
+
+RULES = load_yaml("rules.yaml")
+RULESET_VERSION = RULES.get("ruleset_version", "unknown")
+RULES_HASH = file_sha256("rules.yaml")
+
+
+def chain_entry(prev_hash, entry):
+    """Return the SHA-256 chain hash of an audit entry (methodology section 13.2).
+
+    entry_hash = SHA-256(prev_hash + canonical_json(entry)). Altering any row
+    invalidates every subsequent hash. This gives tamper evidence, not tamper
+    proofing: an actor with write access can rebuild the whole chain.
+    """
+    payload = json.dumps(entry, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256((prev_hash + payload).encode("utf-8")).hexdigest()
+
+
+GENESIS_HASH = "0" * 64
+
+
+def paediatric_dtg_band(weight_kg):
+    """Return (band, config) for the WHO dolutegravir weight band containing weight_kg.
+
+    Returns the band dict with its true lower and upper boundaries, so callers
+    do not have to compute the next threshold arithmetically (methodology section 6).
+    """
+    cfg = RULES["paediatric_dtg_dosing"]
+    for band in cfg["bands"]:
+        lo = band["min_kg"]
+        hi = band["max_kg"]
+        if weight_kg >= lo and (hi is None or weight_kg < hi):
+            return band, cfg
+    return None, cfg
 
 # ============================================================
 # 1. ENTERPRISE PAGE CONFIGURATION & GLOBAL STYLING
@@ -413,27 +428,6 @@ if app_view == "About ResistanceMap ZA":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Visitor Counter ──
-    visitor_count = st.session_state._visitor_total
-
-    st.markdown(f"""
-    <div style='text-align:center; margin: 0 0 2rem 0;'>
-        <div style='display:inline-block; background: linear-gradient(135deg, #0d1b2e 0%, #112240 100%);
-                    border: 1px solid #1e3a5f; border-radius: 12px; padding: 1.2rem 2.5rem;
-                    box-shadow: 0 4px 20px rgba(37,99,235,0.15);'>
-            <div style='font-size: 0.7rem; color: #3b82f6; text-transform: uppercase;
-                        letter-spacing: 0.15em; font-weight: 600;'>Total Site Visitors</div>
-            <div style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0;
-                        margin-top: 0.3rem; letter-spacing: 0.05em;'>
-               {visitor_count:,}
-            </div>
-            <div style='font-size: 0.65rem; color: #475569; margin-top: 0.3rem;'>
-                Healthcare professionals &amp; patients across South Africa
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
@@ -606,8 +600,11 @@ elif app_view == "Understanding Your Results":
 
         ("Audit & Compliance",
          "A complete record of every check the system performs",
-         "Every time a doctor uses ResistanceMap ZA, the system creates a tamper-proof record. This protects you as a patient — "
-         "it ensures that every alert was seen and every guideline was followed. It's like a receipt for your medical care."),
+         "Every time a doctor uses ResistanceMap ZA, the system creates a <strong>tamper-evident</strong> record — "
+         "if any earlier entry is changed, the records that follow it no longer match, so tampering shows up. "
+         "This is not the same as tamper-proof: someone with permission to write to the records could rebuild them, "
+         "so the record makes changes <em>detectable</em> rather than impossible. It helps make sure every alert was seen "
+         "and every guideline was followed."),
     ]
 
     for tab_name, tab_summary, tab_detail in tabs_guide:
@@ -714,7 +711,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
 
         # ── System Status ──
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(SAST)
         st.markdown(f"""
         <div style='background:#0a1628; border:1px solid #1e3a5f; border-radius:8px;
                     padding:0.6rem 0.8rem; margin-bottom:0.8rem; font-size:0.72rem;'>
@@ -741,6 +738,10 @@ elif app_view == "Patient Assessment Dashboard":
              "RK Khan Hospital"])
 
         clinician = st.text_input("Clinician (Anonymised Code)", "DR-KZN-0044")
+
+        # Escape free-text before it is interpolated into any unsafe_allow_html markup.
+        patient_id_safe = html.escape(patient_id)
+        clinician_safe = html.escape(clinician)
 
         st.markdown("<p class='section-header'>ART Regimen</p>", unsafe_allow_html=True)
 
@@ -774,11 +775,11 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Adherence Data</p>", unsafe_allow_html=True)
 
         days_missed = st.slider("Days Since Last Dose", 0, 14, 3,
-                                 help="Source: Pharmacy dispensing record (automated)")
+                                 help="Demo input — days since the last ingested dose.")
         hours_missed = days_missed * 24
 
         viral_load = st.number_input("Last Viral Load (copies/mL)", 0, 1000000, 450,
-                                      help="Auto-ingested from NHLS when API connected")
+                                      help="Demo input — most recent laboratory viral load.")
 
         cd4_count = st.number_input("CD4 Count (cells/μL)", 0, 2000, 280)
 
@@ -809,13 +810,20 @@ elif app_view == "Patient Assessment Dashboard":
             "renal_sensitive": True, "color": "#f59e0b"
         },
         "Dolutegravir": {
-            "t_half": 14.0, "c_max": 3.30, "mic": 0.50,
+            # Threshold corrected v4.0 -> v5.0: 0.50 -> 0.064 mg/L PA-IC90 (wild type),
+            # Cottrell, Hadzic & Kashuba, Clin Pharmacokinet 2013;52(11):981-94. Methodology 4.1.
+            "t_half": 14.0, "c_max": 3.30, "mic": 0.064,  # c_max sourcing deferred to Stage 2 (methodology 4.1 lists 2.34)
+            "secondary_threshold": 0.30, "secondary_label": "EC90",  # Wasserman et al., AAC 2022;66(7)
             "mutation": "R263K", "class": "INSTI",
             "cross_resistance": ["G118R", "E138K/A/T", "Q148R"],
             "renal_sensitive": False, "color": "#10b981"
         },
         "Efavirenz": {
-            "t_half": 52.0, "c_max": 4.07, "mic": 0.51,
+            # Threshold corrected v4.0 -> v5.0: 0.51 -> 1.0 mg/L lower therapeutic limit,
+            # Kappelhoff et al., Clin Pharmacokinet 2007;46(2):93-108. Methodology 4.2.
+            # c_max 4.07 and t_half 52 h remain UNVERIFIED (methodology 4.2, 18) — unchanged pending sourcing.
+            "t_half": 52.0, "c_max": 4.07, "mic": 1.0,
+            "secondary_threshold": 0.70, "secondary_label": "SA cohort (Sinxadi 2016)",
             "mutation": "K103N", "class": "NNRTI",
             "cross_resistance": ["Y181C", "G190A", "V106M"],
             "renal_sensitive": False, "color": "#a855f7"
@@ -901,12 +909,14 @@ elif app_view == "Patient Assessment Dashboard":
     # ── Derived Risk Signals ──
     vulnerable_drugs = [
         d for d in active_drugs
-        if (pk_db[d]["mic"] * 0.05) < current_levels[d] < pk_db[d]["mic"]
+        if d in current_levels
+        and (pk_db[d]["mic"] * 0.05) < current_levels[d] < pk_db[d]["mic"]
     ]
 
     below_mic_drugs = [
         d for d in active_drugs
-        if current_levels[d] < pk_db[d]["mic"]
+        if d in current_levels
+        and current_levels[d] < pk_db[d]["mic"]
     ]
 
     # ── Global Risk Score (0–100) ──
@@ -954,7 +964,7 @@ elif app_view == "Patient Assessment Dashboard":
         </div>
         <div style='text-align:right;'>
             <div style='font-size:0.7rem; color:#475569;'>Patient</div>
-            <div style='font-size:1rem; font-weight:700; color:#93c5fd;'>{patient_id}</div>
+            <div style='font-size:1rem; font-weight:700; color:#93c5fd;'>{patient_id_safe}</div>
             <div style='font-size:0.7rem; color:#475569; margin-top:0.2rem;'>
                 {facility.split("–")[0].strip()}
             </div>
@@ -1093,16 +1103,29 @@ elif app_view == "Patient Assessment Dashboard":
                     )
                 ), row=1, col=1)
 
-                # MIC threshold line
+                # Primary efficacy threshold line
                 fig.add_trace(go.Scatter(
                     x=[0, t_max_hours],
                     y=[stats["mic"], stats["mic"]],
-                    mode='lines', name=f"{drug} MIC",
+                    mode='lines', name=f"{drug} threshold",
                     line=dict(width=1.2, dash='dot', color=color),
                     opacity=0.5,
                     showlegend=False,
                     hoverinfo='skip'
                 ), row=1, col=1)
+
+                # Secondary reference line (e.g. DTG EC90, EFV SA-cohort limit)
+                if stats.get("secondary_threshold"):
+                    fig.add_trace(go.Scatter(
+                        x=[0, t_max_hours],
+                        y=[stats["secondary_threshold"], stats["secondary_threshold"]],
+                        mode='lines',
+                        name=f"{drug} {stats.get('secondary_label', 'secondary')}",
+                        line=dict(width=1.0, dash='dash', color=color),
+                        opacity=0.3,
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ), row=1, col=1)
 
                 # MIC % coverage
                 fig.add_trace(go.Scatter(
@@ -1269,30 +1292,26 @@ elif app_view == "Patient Assessment Dashboard":
             mutation_data = []
             for drug in active_drugs:
                 stats = pk_db.get(drug)
-                if not stats:
+                if not stats or drug not in current_levels:
                     continue
                 lvl = current_levels[drug]
                 mic = stats["mic"]
                 ratio = lvl / mic
 
+                # Ordinal selection-pressure label (direction only, no probability).
                 if ratio >= 2.0:
                     pressure = "SUPPRESSED"
                     p_color  = "#10b981"
-                    risk_pct = max(0, 5 - days_missed * 0.5)
                 elif ratio >= 1.0:
                     pressure = "MARGINAL"
                     p_color  = "#3b82f6"
-                    risk_pct = 15 + days_missed * 2
                 elif ratio >= 0.05:
                     pressure = "HIGH"
                     p_color  = "#f59e0b"
-                    risk_pct = 45 + days_missed * 4
                 else:
                     pressure = "CRITICAL"
                     p_color  = "#ef4444"
-                    risk_pct = 80 + days_missed * 1.5
 
-                risk_pct = min(risk_pct, 99)
                 cross_res = ", ".join(stats.get("cross_resistance", ["None"]))
 
                 mutation_data.append({
@@ -1302,57 +1321,25 @@ elif app_view == "Patient Assessment Dashboard":
                     "cross_res": cross_res,
                     "pressure":  pressure,
                     "p_color":   p_color,
-                    "risk_pct":  risk_pct,
                     "ratio":     ratio
                 })
 
-            # ── Resistance Probability Bar Chart ──
-            drugs_list = [m["drug"] for m in mutation_data]
-            risk_vals  = [m["risk_pct"] for m in mutation_data]
-            colors_bar = [m["p_color"] for m in mutation_data]
-
-            fig_mut = go.Figure(go.Bar(
-                x=risk_vals, y=drugs_list,
-                orientation='h',
-                marker=dict(
-                    color=colors_bar,
-                    line=dict(width=0)
-                ),
-                text=[f"{v:.0f}%" for v in risk_vals],
-                textposition='outside',
-                textfont=dict(color='#94a3b8', size=11),
-                hovertemplate=(
-                    "<b>%{y}</b><br>"
-                    "Mutation Risk: %{x:.0f}%<extra></extra>"
-                )
-            ))
-
-            fig_mut.update_layout(
-                title=dict(text="Estimated Mutation Emergence Probability",
-                           font=dict(color='#94a3b8', size=13)),
-                plot_bgcolor="#0a0e1a",
-                paper_bgcolor="#0d1b2e",
-                font=dict(family="Inter", color="#94a3b8", size=11),
-                xaxis=dict(
-                    range=[0, 110],
-                    gridcolor="#0f2237",
-                    title="Probability (%)",
-                    tickformat='.0f'
-                ),
-                yaxis=dict(gridcolor="#0f2237"),
-                height=280,
-                margin=dict(l=0, r=40, t=40, b=0)
-            )
-
-            # Danger threshold
-            fig_mut.add_vline(
-                x=50, line_dash="dot", line_color="#ef4444",
-                annotation_text=" Clinical Threshold",
-                annotation_font_color="#ef4444",
-                annotation_font_size=10
-            )
-
-            st.plotly_chart(fig_mut, width="stretch")
+            # The fabricated "Estimated Mutation Emergence Probability" bar chart and its
+            # 50% "Clinical Threshold" line were removed in v5.0 (methodology 9.1). A
+            # validated ordinal mutation-risk index replaces it in a later stage; until
+            # then this space intentionally shows no number.
+            st.markdown("""
+            <div class='alert-info'>
+                <div style='font-weight:600; font-size:0.82rem;'>
+                    Mutation-risk index pending
+                </div>
+                <div style='font-size:0.78rem; margin-top:0.3rem; line-height:1.6;'>
+                    The previous percentage output has been removed because it was not derived
+                    from any data (methodology &sect;9.1). An ordinal, clearly labelled index
+                    replaces it in a later release. No probability is shown here in the interim.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
             # ── Cross-Resistance Map ──
             st.markdown("<p class='section-header'>Cross-Resistance Cascade Analysis</p>",
@@ -1544,25 +1531,57 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Paediatric Alert ──
         if paediatric:
             directives_fired += 1
-            band_dose = "5mg" if weight_kg < 6 else "10mg" if weight_kg < 10 else "15mg" if weight_kg < 14 else "20mg" if weight_kg < 20 else "25mg" if weight_kg < 25 else "30mg"
-            st.markdown(f"""
-            <div class='alert-info'>
-                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   PAEDIATRIC WEIGHT-BAND DOSING PROTOCOL ACTIVE
+            band, ped_cfg = paediatric_dtg_band(weight_kg)
+            min_age = ped_cfg.get("minimum_age_months", 6)
+
+            if band is None:
+                st.markdown(f"""
+                <div class='alert-warning'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       PAEDIATRIC DOSING — WEIGHT BELOW LOWEST BAND
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        Patient weight <strong>{weight_kg} kg</strong> is below the lowest WHO
+                        weight band. No modelled dose is shown. Refer to current paediatric
+                        guidelines and specialist advice.<br>
+                        <span style='color:#94a3b8;'>Class A (Derived) &middot; ruleset v{RULESET_VERSION}</span>
+                    </div>
                 </div>
-                <div style='font-size:0.82rem; line-height:1.7;'>
-                    Patient weight: <strong>{weight_kg} kg</strong>.
-                    Paediatric DTG weight-band dosing (WHO 2023 revised schedule):<br><br>
-                   <strong>Recommended DTG Dose:</strong>
-                    <span style='color:#93c5fd; font-weight:700;'>{band_dose} once daily</span><br>
-                   Weight-band boundaries are automatically recalculated on each clinic visit.
-                    The system will issue a dose-escalation alert when the patient crosses the next
-                    weight threshold (next band at {weight_kg + 5} kg).<br>
-                   <strong>Volume check:</strong> Confirm dispersible tablet formulation.
-                    Do not substitute adult film-coated tablet.
+                """, unsafe_allow_html=True)
+            else:
+                band_dose = html.escape(band["dose"])
+                band_label = html.escape(band.get("label", ""))
+                hi = band["max_kg"]
+                if hi is None:
+                    boundary_text = (
+                        f"Current band: <strong>{band_label}</strong>. This is the highest band. "
+                        f"From 20 kg, adult 50 mg film-coated tablets once daily are appropriate."
+                    )
+                else:
+                    boundary_text = (
+                        f"Current band: <strong>{band_label}</strong>. "
+                        f"The next dose change is due when the patient reaches <strong>{hi} kg</strong>."
+                    )
+                st.markdown(f"""
+                <div class='alert-info'>
+                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                       PAEDIATRIC WEIGHT-BAND DOSING PROTOCOL ACTIVE
+                    </div>
+                    <div style='font-size:0.82rem; line-height:1.7;'>
+                        Patient weight: <strong>{weight_kg} kg</strong>.
+                        WHO weight-band dosing for dolutegravir dispersible tablets:<br><br>
+                       <strong>Recommended DTG Dose:</strong>
+                        <span style='color:#93c5fd; font-weight:700;'>{band_dose} once daily</span><br>
+                       {boundary_text}<br>
+                       <strong>Age check:</strong> This model is not applicable below {min_age} months
+                        of age (UGT1A1 maturation). Confirm age &ge; 6 months before applying the
+                        6 to &lt;10 kg band.<br>
+                       <strong>Volume check:</strong> Confirm dispersible tablet formulation.
+                        Do not substitute adult film-coated tablet below 20 kg.<br>
+                        <span style='color:#94a3b8;'>Class A (Derived) &middot; ruleset v{RULESET_VERSION}</span>
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
         # ── Sub-MIC Mutation Pressure Alerts ──
         for drug in vulnerable_drugs:
@@ -1620,7 +1639,7 @@ elif app_view == "Patient Assessment Dashboard":
                     Next scheduled viral load review as per routine NDoH monitoring schedule.
                     <br><br>
                    <strong>Routine Action:</strong> Continue current regimen.
-                    Confirm 3-monthly pharmacy collection. Record in TIER.Net.
+                    Confirm 3-monthly pharmacy collection. Record in the facility register.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1678,7 +1697,7 @@ elif app_view == "Patient Assessment Dashboard":
     # TAB 4: ADHERENCE RISK ENGINE
     # ────────────────────────────────────────────────────────────
     with tab4:
-        st.markdown("<p class='section-header'>Socio-Economic Predictive AI — Defaulter Risk Model</p>",
+        st.markdown("<p class='section-header'>Adherence & Support Screening — Heuristic (Class C)</p>",
                     unsafe_allow_html=True)
 
         col_ai1, col_ai2 = st.columns([1, 1])
@@ -1705,7 +1724,7 @@ elif app_view == "Patient Assessment Dashboard":
             disclosure = st.selectbox("HIV Status Disclosure",
                 ["Fully disclosed", "Partially disclosed", "Non-disclosed"])
 
-            # ── ML-Style Risk Model ──
+            # ── Hand-weighted heuristic screen (class C, not a trained model) ──
             adherence_risk = 0
             adherence_risk += days_missed * 5
             adherence_risk += distance_km * 0.6
@@ -1773,7 +1792,7 @@ elif app_view == "Patient Assessment Dashboard":
                     {ar_label} — Predicted Default Probability: {adherence_risk:.0f}%
                 </div>
                 <div style='font-size:0.8rem; margin-top:0.4rem;'>
-                   <strong>AI Recommended Action:</strong> {ar_action}
+                   <strong>Recommended Action:</strong> {ar_action}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1827,26 +1846,28 @@ elif app_view == "Patient Assessment Dashboard":
             st.markdown("<p class='section-header'>Automated Intervention Protocol</p>",
                         unsafe_allow_html=True)
 
+            # These are suggested actions for the clinic team. The prototype does not
+            # dispatch messages, contact workers, or submit laboratory orders.
             interventions = []
             if adherence_risk >= 65:
                 interventions = [
-                    ("CHW Home Visit", "Dispatched within 24h. GPS coordinates loaded from last clinic registration."),
-                    ("WhatsApp Alert", "Encrypted reminder sent. Message: 'Your medication is ready for collection.'"),
-                    ("Clinic Call-Back", "Dedicated adherence counsellor assigned. Case flagged in TIER.Net."),
-                    ("Multi-Month Dispensing", "Consider 3-month supply to reduce transport burden at next visit.")
+                    ("CHW Home Visit", "Consider a community health worker home visit."),
+                    ("Appointment Reminder", "Consider a reminder for medication collection."),
+                    ("Clinic Call-Back", "Consider assigning an adherence counsellor."),
+                    ("Multi-Month Dispensing", "Consider a 3-month supply to reduce transport burden.")
                 ]
             elif adherence_risk >= 40:
                 interventions = [
-                    ("WhatsApp Reminder", "Automated sequence: Day 1, Day 3, Day 5. Escalates to voice call."),
-                    ("Viral Load Alert", "Fast-track VL order submitted to NHLS for processing within 48h.")
+                    ("Appointment Reminder", "Consider a staged reminder sequence."),
+                    ("Viral Load Review", "Consider reviewing whether a repeat viral load is due.")
                 ]
             elif adherence_risk >= 20:
                 interventions = [
-                    ("SMS Reminder", "Standard 7-day pre-appointment reminder activated."),
+                    ("Appointment Reminder", "Consider a standard pre-appointment reminder."),
                 ]
             else:
                 interventions = [
-                    ("Routine Monitoring", "No enhanced intervention required. Standard care pathway.")
+                    ("Routine Monitoring", "No enhanced intervention indicated. Standard care pathway.")
                 ]
 
             for title, desc in interventions:
@@ -1866,69 +1887,79 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<p class='section-header'>Session Audit Trail</p>",
                     unsafe_allow_html=True)
 
-        # ── Simulated Audit Log ──
-        now = datetime.datetime.now()
+        # ── Audit trail — real SHA-256 chain (methodology section 13.2) ──
+        # All rows belong to a single assessment recorded at one instant.
+        # Display time is SAST; the hashed entry stores UTC. Full SQLite
+        # persistence is deferred to Stage 6; this session builds the chain
+        # in memory so the displayed hashes are genuine and verifiable.
+        now = datetime.datetime.now(SAST)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        ts_sast = now.strftime("%Y-%m-%d %H:%M:%S")
+        ts_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        facility_short = facility.split("–")[0].strip()
 
-        audit_events = []
-
-        audit_events.append({
-            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "event":     "CLINICAL SESSION OPENED",
-            "detail":    f"Patient {patient_id} | Clinician {clinician} | Facility: {facility.split('–')[0].strip()}",
-            "level":     "INFO",
-            "hash":      f"SHA256:{abs(hash(patient_id + clinician)):#x}"[:24]
-        })
-
-        audit_events.append({
-            "timestamp": (now - datetime.timedelta(seconds=2)).strftime("%Y-%m-%d %H:%M:%S"),
-            "event":     "PK ENGINE COMPUTED",
-            "detail":    f"Regimen: {regimen.split('(')[0].strip()} | Modifiers: {len(flat_mods)} applied",
-            "level":     "INFO",
-            "hash":      f"SHA256:{abs(hash(regimen)):#x}"[:24]
-        })
-
+        raw_events = [
+            ("CLINICAL SESSION OPENED",
+             f"Patient {patient_id} | Clinician {clinician} | Facility: {facility_short}",
+             "INFO"),
+            ("PK ENGINE COMPUTED",
+             f"Regimen: {regimen.split('(')[0].strip()} | Modifiers: {len(flat_mods)} applied",
+             "INFO"),
+        ]
         if tb_coinfection:
-            audit_events.append({
-                "timestamp": (now - datetime.timedelta(seconds=3)).strftime("%Y-%m-%d %H:%M:%S"),
-                "event":     "GUIDELINE ALERT FIRED",
-                "detail":    "NDoH §5.3 — Rifampicin/DTG interaction. DTG dose doubling directive issued.",
-                "level":     "CRITICAL",
-                "hash":      f"SHA256:{abs(hash('rifampicin')):#x}"[:24]
-            })
-
+            raw_events.append((
+                "GUIDELINE ALERT FIRED",
+                "Rifampicin/DTG interaction. DTG dose doubling directive issued.",
+                "CRITICAL"))
         if traditional_meds:
-            audit_events.append({
-                "timestamp": (now - datetime.timedelta(seconds=4)).strftime("%Y-%m-%d %H:%M:%S"),
-                "event":     "PHARMACOVIGILANCE ALERT",
-                "detail":    "Traditional medicine CYP450 interaction flagged. Counselling required.",
-                "level":     "WARNING",
-                "hash":      f"SHA256:{abs(hash('trad_meds')):#x}"[:24]
-            })
-
+            raw_events.append((
+                "PHARMACOVIGILANCE ALERT",
+                "Traditional medicine interaction flagged. Counselling required.",
+                "WARNING"))
         for drug in below_mic_drugs:
+            raw_events.append((
+                "EFFICACY THRESHOLD BREACH",
+                f"{drug} modelled concentration below its efficacy threshold. "
+                f"Signature mutation: {pk_db[drug]['mutation']}.",
+                "CRITICAL"))
+        raw_events.append((
+            "LABORATORY VALUES RECORDED",
+            f"Viral load: {viral_load:,} cp/mL | CD4: {cd4_count} cells/uL",
+            "INFO"))
+        raw_events.append((
+            "ADHERENCE SCREEN COMPUTED",
+            f"Heuristic default score: {adherence_risk:.0f} | Category: {ar_label}",
+            "INFO"))
+
+        data_hashes = {"rules.yaml": RULES_HASH}
+        audit_events = []
+        prev_hash = GENESIS_HASH
+        for seq, (event, detail, level) in enumerate(raw_events, start=1):
+            entry = {
+                "seq": seq,
+                "timestamp_utc": ts_utc,
+                "sast_offset": "+02:00",
+                "patient_ref": patient_id,
+                "clinician_ref": clinician,
+                "facility_code": facility_short,
+                "event": event,
+                "detail": detail,
+                "level": level,
+                "ruleset_version": RULESET_VERSION,
+                "data_hashes": data_hashes,
+                "prev_hash": prev_hash,
+            }
+            entry_hash = chain_entry(prev_hash, entry)
             audit_events.append({
-                "timestamp": (now - datetime.timedelta(seconds=5)).strftime("%Y-%m-%d %H:%M:%S"),
-                "event":     "SUB-MIC THRESHOLD BREACH",
-                "detail":    f"{drug} plasma level below MIC. Mutation selection risk: {pk_db[drug]['mutation']}.",
-                "level":     "CRITICAL",
-                "hash":      f"SHA256:{abs(hash(drug+'mic')):#x}"[:24]
+                "seq": seq,
+                "timestamp": ts_sast,
+                "event": event,
+                "detail": detail,
+                "level": level,
+                "prev_hash": prev_hash,
+                "hash": entry_hash,
             })
-
-        audit_events.append({
-            "timestamp": (now - datetime.timedelta(seconds=6)).strftime("%Y-%m-%d %H:%M:%S"),
-            "event":     "NHLS FEED CHECKED",
-            "detail":    f"Viral load ingestion: {viral_load:,} cp/mL | CD4: {cd4_count} cells/μL",
-            "level":     "INFO",
-            "hash":      f"SHA256:{abs(hash(str(viral_load))):#x}"[:24]
-        })
-
-        audit_events.append({
-            "timestamp": (now - datetime.timedelta(seconds=7)).strftime("%Y-%m-%d %H:%M:%S"),
-            "event":     "ADHERENCE SCORE COMPUTED",
-            "detail":    f"Default risk: {adherence_risk:.0f}% | Category: {ar_label}",
-            "level":     "INFO",
-            "hash":      f"SHA256:{abs(hash(str(adherence_risk))):#x}"[:24]
-        })
+            prev_hash = entry_hash
 
         level_colors = {
             "INFO":     "#3b82f6",
@@ -1940,16 +1971,17 @@ elif app_view == "Patient Assessment Dashboard":
         rows_html = ""
         for ev in audit_events:
             color = level_colors.get(ev["level"], "#94a3b8")
+            hash_short = ev["hash"][:16] + "…"
             rows_html += f"""<tr>
                 <td style='font-family:monospace; font-size:0.72rem; color:#64748b;'>
                     {ev["timestamp"]}
                 </td>
                 <td>
                     <span style='color:{color}; font-weight:600; font-size:0.78rem;'>
-                        {ev["event"]}
+                        {html.escape(ev["event"])}
                     </span>
                 </td>
-                <td style='font-size:0.75rem; color:#94a3b8;'>{ev["detail"]}</td>
+                <td style='font-size:0.75rem; color:#94a3b8;'>{html.escape(ev["detail"])}</td>
                 <td>
                     <span style='background:#0a0e1a; color:{color}; border:1px solid {color}33;
                                  border-radius:12px; padding:0.1rem 0.5rem; font-size:0.62rem;
@@ -1957,8 +1989,9 @@ elif app_view == "Patient Assessment Dashboard":
                         {ev["level"]}
                     </span>
                 </td>
-                <td style='font-family:monospace; font-size:0.65rem; color:#334155;'>
-                    {ev["hash"]}
+                <td style='font-family:monospace; font-size:0.65rem; color:#334155;'
+                    title='{ev["hash"]}'>
+                    {hash_short}
                 </td>
             </tr>"""
 
@@ -1970,11 +2003,22 @@ elif app_view == "Patient Assessment Dashboard":
                     <th>Event</th>
                     <th>Detail</th>
                     <th>Level</th>
-                    <th>Integrity Hash</th>
+                    <th>Entry Hash (SHA-256 chain)</th>
                 </tr>
             </thead>
             <tbody>{rows_html}</tbody>
         </table>
+        """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div style='margin-top:0.6rem; font-size:0.7rem; color:#64748b; line-height:1.6;'>
+            Each row's hash is <strong>SHA-256(previous hash + canonical JSON of the row)</strong>,
+            seeded from a genesis hash of {GENESIS_HASH[:8]}…. Altering any row changes every
+            hash after it, so the chain is <strong>tamper-evident</strong>. It is <strong>not
+            tamper-proof</strong>: an actor with write access can rebuild the whole chain.
+            Genuine tamper resistance would require publishing the chain head outside this system.
+            Ruleset v{RULESET_VERSION} &middot; rules.yaml {RULES_HASH[:8]}.
+        </div>
         """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2073,18 +2117,20 @@ AUDIT INTEGRITY
         with exp_col2:
             st.markdown("""
             <div style='background:#0d1b2e; border:1px solid #1e3a5f; border-radius:8px;
-                        padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;'>
+                        padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;
+                        opacity:0.5;'>
                Export to TIER.Net<br>
-                <span style='color:#334155;'>(HL7/FHIR API — Enterprise Licence)</span>
+                <span style='color:#334155;'>Not implemented — planned</span>
             </div>
             """, unsafe_allow_html=True)
 
         with exp_col3:
             st.markdown("""
             <div style='background:#0d1b2e; border:1px solid #1e3a5f; border-radius:8px;
-                        padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;'>
+                        padding:0.6rem; text-align:center; font-size:0.75rem; color:#475569;
+                        opacity:0.5;'>
                Push to NHLS Portal<br>
-                <span style='color:#334155;'>(NHLS API — Enterprise Licence)</span>
+                <span style='color:#334155;'>Not implemented — planned</span>
             </div>
             """, unsafe_allow_html=True)
 
