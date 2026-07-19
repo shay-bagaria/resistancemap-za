@@ -365,6 +365,8 @@ For tier B drugs, active means f(t) ≥ 0.25, i.e. at least a quarter of steady-
 
 **Abacavir / indeterminate case.** A drug with `curve_available: false` (abacavir) counts as neither active nor inactive: no curve, no f(t). For a regimen containing such a component the state is reported as **INDETERMINATE** rather than guessed.
 
+**As built** (commit 159bfc3). `engine/selection.py`: `classify`, `state_series`, `monotherapy_window`, `worst_state`. The state band renders beneath the decay curves with the class C cutoff label adjacent; the ABC/3TC/DTG regimen returns INDETERMINATE at every hour and the composite band is Indeterminate for it.
+
 ### 8.3 Display
 
 The state is rendered as a coloured band along the time axis beneath the decay curves, so the duration and position of any monotherapy window is directly visible. The system reports the start time, end time and duration of the monotherapy window when one exists. The 0.25 cut-off's class C label sits adjacent to the band.
@@ -416,6 +418,8 @@ For each drug, a four-level ordinal index combining two ordered inputs.
 
 Index = exposure level + barrier level, mapped: 0 → Minimal, 1 → Low, 2 → Moderate, 3–4 → High. Displayed with the contributing levels itemised, and labelled "Ordinal heuristic. Not a probability. Not validated against outcome data."
 
+**As built** (commit 159bfc3). `engine/selection.py`: `exposure_level`, `barrier_level`, `mutation_index`. Barrier is read from `genetic_barrier` in `drugs.yaml`. Because barrier is a standing property, a low-barrier drug (3TC, EFV) reads at least Moderate even when suppressed — this is intended (§9.3).
+
 ### 9.3 Why genetic barrier must be included
 
 The v4.0 model gave every drug the same risk curve. M184V emerges readily under lamivudine pressure; R263K under dolutegravir is rare, and dolutegravir's high barrier is a principal reason it anchors first-line treatment. Treating those two as equally likely at the same inhibitory quotient misrepresents the pharmacology.
@@ -438,6 +442,8 @@ composite = w_state × state_severity
 ```
 
 with `state_severity` from §8, ordered so FUNCTIONAL_MONOTHERAPY carries the highest weight. Paediatric status is removed. Tuberculosis co-infection and herbal use are removed as direct terms, since their effect already enters through the decay curves; double-counting them inflates the score. Weights remain hand-chosen, in `data/rules.yaml`, class C. The output is an ordinal band, not a number out of 100, with the class C label adjacent to the value.
+
+**As built** (commit 159bfc3). `state_severity` uses the *worst* state over the elapsed window [0, hours_missed], so a monotherapy window that has already occurred keeps the band high. `viral_load_band` and `cd4_band` are 0/1/2 from the `viral_load_bands`/`cd4_bands` thresholds. If the regimen state is INDETERMINATE the composite is reported as Indeterminate, not a number.
 
 ---
 
@@ -505,23 +511,23 @@ Software informing antiretroviral prescribing falls within the medical-device de
 | 1 | Paediatric DTG bands | 10/15/20/25 mg | 15/20/25/30 mg per WHO; age split | 1, 1b | 97b121d, d8505a4 |
 | 2 | Dolutegravir threshold | 0.50 mg/L | 0.064 mg/L PA-IC90 | 1 | 97b121d |
 | 3 | NRTI compartment | Plasma half-life | Intracellular anabolite (tier B) | 2, 3 | eba20f6, 776fb9c |
-| 4 | Mutation probability | Fabricated percentage | Ordinal index | 1, 4 | 97b121d, (this stage) |
+| 4 | Mutation probability | Fabricated percentage | Ordinal index | 1, 4 | 97b121d, 159bfc3 |
 | 5 | Audit hash | `hash()` labelled SHA256 | Real SHA-256 chain | 1 | 97b121d |
 | 6 | Efavirenz threshold | 0.51 mg/L | 1.0 mg/L | 1 | 97b121d |
-| 7 | Risk direction | Cleared drug = highest risk | Monotherapy = highest risk | 4 | (this stage) |
+| 7 | Risk direction | Cleared drug = highest risk | Monotherapy = highest risk | 4 | 159bfc3 |
 | 8 | Rifampicin mechanism | CYP3A4 | UGT1A1 principal | 3 | 776fb9c |
 | 9 | Dose doubling not modelled | Directive only | Applied to curve (BD) | 3 | 776fb9c |
 | 10 | Herbal preparations | Combined, magnitude asserted | Separated, magnitude removed | 3 | 776fb9c |
 | 11 | Hypoxis FBC advice | Attributed to TDF | Removed | 1b | d8505a4 |
 | 12 | Paediatric scaling | Linear | Allometric ^0.25 | 3 | 776fb9c |
 | 13 | MIC terminology | Throughout | PA-IC90 / threshold | 1b, 6 | d8505a4, pending |
-| 14 | Genetic barrier | Absent | Included in mutation index | 4 | (this stage) |
+| 14 | Genetic barrier | Absent | Included in mutation index | 4 | 159bfc3 |
 | 15 | Adherence model | Scored social disadvantage | Support-needs framing | 5 | pending |
 | 16 | Efavirenz–rifampicin | 0.74 multiplier | Removed | 3 | 776fb9c |
 | 17 | Renal multipliers | Fixed per category | eGFR input, scaling disabled | 3 | 776fb9c |
 | 18 | Timestamps | Server local, labelled SAST | Africa/Johannesburg, UTC stored | 1 | 97b121d |
 | 19 | Log axis | Unbounded | Clamped at LLOQ | 3 | 776fb9c |
-| 20 | Resistance window shading | 0.85× to 1.3× elapsed | Derived from state classification | 4 | (this stage) |
+| 20 | Resistance window shading | 0.85× to 1.3× elapsed | Derived from state classification | 4 | 159bfc3 |
 | 21 | HTML injection | Unescaped free text | `html.escape()` | 1 | 97b121d |
 | 22 | Visitor counter | Seeded and floored at 322 | Removed | 1 | 97b121d |
 | 23 | Unimplemented integrations | Presented as features | Removed or marked | 1 | 97b121d |
