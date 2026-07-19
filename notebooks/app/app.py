@@ -24,6 +24,7 @@ _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 from engine import pk
+from engine import selection as sel
 
 # ============================================================
 # DATA BUNDLE LOADING (versioned rules, methodology section 13.2)
@@ -140,7 +141,7 @@ DRUGS = DATA["drugs.yaml"]["drugs"]
 RULES = DATA["rules.yaml"]
 INTERACTIONS = {x["id"]: x for x in DATA["interactions.yaml"]["interactions"]}
 REGIMENS = {r["display"]: r["components"] for r in RULES["regimens"]}
-RISK_W = RULES["risk_score_weights"]
+COMPOSITE = RULES["composite_score"]
 ADH_W = RULES["adherence_weights"]
 VL_BANDS = RULES["viral_load_bands"]
 CD4_BANDS = RULES["cd4_bands"]
@@ -1058,49 +1059,90 @@ elif app_view == "Patient Assessment Dashboard":
             all_modifiers[drug] = mods
 
 
-    # ── Derived Risk Signals ──
-    # Only tier A drugs carry a threshold_mg_L (methodology section 3.4); tier B
-    # prodrugs are excluded from these plasma-threshold comparisons until the
-    # Stage 3 two-tier engine provides their relative-exposure classification.
-    vulnerable_drugs = [
-        d for d in active_drugs
-        if d in current_levels and "threshold_mg_L" in pk_db[d]
-        and (pk_db[d]["threshold_mg_L"] * 0.05) < current_levels[d] < pk_db[d]["threshold_mg_L"]
-    ]
+    # ── Regimen state, mutation index, composite (methodology sections 8–10) ──
+    t_max_hours = max(days_missed * 24 + 72, 168)
+    ACTIVITY_CUTOFF = sel.DEFAULT_CUTOFF   # 0.25, class C (§8.2)
 
-    below_mic_drugs = [
-        d for d in active_drugs
-        if d in current_levels and "threshold_mg_L" in pk_db[d]
-        and current_levels[d] < pk_db[d]["threshold_mg_L"]
-    ]
+    components = []
+    for drug in active_drugs:
+        stats = pk_db.get(drug)
+        if not stats:
+            continue
+        if not stats.get("curve_available"):
+            components.append({"name": drug, "kind": "indeterminate"})
+        elif "threshold_mg_L" in stats:
+            components.append({"name": drug, "kind": "A",
+                               "c_max": stats["c_max"],
+                               "t_half": adjusted_halves.get(drug, stats["t_half"]),
+                               "threshold": stats["threshold_mg_L"]})
+        else:
+            components.append({"name": drug, "kind": "B",
+                               "intra_t_half": stats["intracellular_t_half"],
+                               "cutoff": stats.get("activity_fraction_cutoff", ACTIVITY_CUTOFF)})
 
-    # ── Global Risk Score (0–100) ──
-    # Weights relocated to rules.yaml (methodology section 10). Class C. The whole
-    # score is restructured in Stage 4 (section 10.2); the arithmetic is unchanged.
-    def compute_risk_score():
-        w = RISK_W
-        score = 0
-        score += days_missed * w["per_day_missed"]
-        score += len(below_mic_drugs) * w["per_below_threshold_drug"]
-        score += len(vulnerable_drugs) * w["per_vulnerable_drug"]
-        if tb_coinfection:                        score += w["tb_coinfection"]
-        if traditional_meds:                      score += w["traditional_meds"]
-        if viral_load > VL_BANDS["high_above"]:   score += w["viral_load_gt_1000"]
-        if cd4_count < CD4_BANDS["severe_below"]: score += w["cd4_lt_200"]
-        if paediatric:                            score += w["paediatric"]
-        return min(score, w["cap"])
+    has_indeterminate = any(c["kind"] == "indeterminate" for c in components)
 
-    risk_score = compute_risk_score()
+    state_series = []
+    current_state = None
+    mono_window = None
+    worst_state = None
+    mutation_rows = []
+    composite_label = None
+    composite_colour = "#64748b"
+    composite_contribs = {}
+    state_available = bool(components) and not curve_suppressed
 
-    if risk_score >= 70:
-        risk_label = "CRITICAL"
-        risk_color = "#ef4444"
-    elif risk_score >= 40:
-        risk_label = "ELEVATED"
-        risk_color = "#f59e0b"
-    else:
-        risk_label = "STABLE"
-        risk_color = "#10b981"
+    if state_available:
+        state_series = sel.state_series(components, t_max_hours, cutoff=ACTIVITY_CUTOFF)
+        current_state = sel.classify(components, hours_missed, cutoff=ACTIVITY_CUTOFF)
+        mono_window = sel.monotherapy_window(state_series)
+        worst_state = sel.worst_state(state_series, up_to_h=hours_missed)
+
+        for drug in active_drugs:
+            stats = pk_db.get(drug)
+            if not stats:
+                continue
+            if has_indeterminate:
+                mutation_rows.append({"name": drug, "label": "Indeterminate",
+                                      "exposure": None, "barrier": None, "numeric": None})
+                continue
+            exp = sel.exposure_level(components, drug, hours_missed, cutoff=ACTIVITY_CUTOFF)
+            barrier = sel.barrier_level(stats["genetic_barrier"])
+            numeric, label = sel.mutation_index(exp, barrier)
+            mutation_rows.append({"name": drug, "label": label, "exposure": exp,
+                                  "barrier": barrier, "numeric": numeric})
+
+        if has_indeterminate or worst_state == sel.INDETERMINATE:
+            composite_label = "Indeterminate"
+        else:
+            vl_band = (2 if viral_load > VL_BANDS["high_above"]
+                       else 1 if viral_load > VL_BANDS["undetectable_below"] else 0)
+            cd4_band = (2 if cd4_count < CD4_BANDS["severe_below"]
+                        else 1 if cd4_count < CD4_BANDS["low_below"] else 0)
+            state_sev = sel.STATE_SEVERITY.get(worst_state, 0)
+            max_mut = max((r["numeric"] for r in mutation_rows if r["numeric"] is not None),
+                          default=0)
+            w = COMPOSITE["weights"]
+            composite_raw = (w["state"] * state_sev + w["mutation"] * max_mut
+                             + w["viral_load"] * vl_band + w["immune"] * cd4_band)
+            band = COMPOSITE["bands"][0]
+            for b in COMPOSITE["bands"]:
+                if composite_raw >= b["min"]:
+                    band = b
+            composite_label = band["label"]
+            composite_colour = band["colour"]
+            composite_contribs = {"state": worst_state, "state_sev": state_sev,
+                                  "mutation": max_mut, "viral_load": vl_band,
+                                  "cd4": cd4_band, "raw": composite_raw}
+
+    # Human-readable state labels / colours for display.
+    STATE_META = {
+        sel.FULL_SUPPRESSION:       ("Full suppression", "#10b981"),
+        sel.PARTIAL_SUPPRESSION:    ("Partial suppression", "#f59e0b"),
+        sel.FUNCTIONAL_MONOTHERAPY: ("Functional monotherapy", "#ef4444"),
+        sel.NO_PRESSURE:            ("No pressure (rebound risk)", "#64748b"),
+        sel.INDETERMINATE:          ("Indeterminate", "#a855f7"),
+    }
 
     # ============================================================
     # 4. MAIN DASHBOARD — HEADER
@@ -1130,27 +1172,25 @@ elif app_view == "Patient Assessment Dashboard":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Coverage disclosure (tier B components are not yet in the composite score) ──
-    scored_components = [d for d in active_drugs if "threshold_mg_L" in pk_db.get(d, {})]
-    unscored_components = [d for d in active_drugs if pk_db.get(d, {}).get("tier") == "B"]
+    # ── Coverage disclosure ──
+    # Tier B now contributes to the state classification (§8). Only components with
+    # NO curve at all (abacavir) remain outside the model, making the whole regimen
+    # state indeterminate — that is the only case that is now "partial".
+    unscored_components = [d for d in active_drugs if not pk_db.get(d, {}).get("curve_available")]
     partial_note = "Partial assessment" if unscored_components else ""
 
     if unscored_components:
         st.markdown(f"""
         <div class='alert-warning' style='margin-bottom:0.9rem;'>
             <div style='font-weight:700; font-size:0.82rem;'>
-               PARTIAL ASSESSMENT — not every regimen component is in the score
+               PARTIAL ASSESSMENT — regimen state is indeterminate
             </div>
             <div style='font-size:0.78rem; margin-top:0.3rem; line-height:1.6;'>
-                In the composite score:
-                <strong>{', '.join(scored_components) if scored_components else 'none'}</strong>
-                (tier A, plasma efficacy threshold).<br>
-                Not in the score:
-                <strong>{', '.join(unscored_components)}</strong> —
-                nucleos(t)ide prodrugs whose active moiety is intracellular. Their remaining
-                exposure is shown in the drug status panel as a percentage of steady state, but
-                no inhibitory quotient is computed (methodology &sect;3.4). The two-tier
-                selection-pressure model arrives in Stage 4.
+                <strong>{', '.join(unscored_components)}</strong>
+                {'has' if len(unscored_components) == 1 else 'have'} no decay curve (active-moiety
+                half-life unsourced; methodology &sect;4.5), so {'it counts' if len(unscored_components) == 1 else 'they count'}
+                as neither active nor inactive. The regimen state and composite band are reported
+                as <strong>indeterminate</strong> rather than guessed (methodology &sect;8.2).
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1159,22 +1199,25 @@ elif app_view == "Patient Assessment Dashboard":
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
     with kpi1:
+        comp_display = composite_label if composite_label else "—"
         st.markdown(f"""
         <div class='metric-card'>
-            <h3>Resistance Risk Score</h3>
-            <div class='metric-value' style='color:{risk_color};'>{risk_score}/100</div>
-            <div class='metric-delta' style='color:#f59e0b; font-size:0.68rem;'>{partial_note}</div>
-            <div class='metric-delta' style='color:{risk_color};'>● {risk_label}</div>
+            <h3>Composite Risk Band</h3>
+            <div class='metric-value' style='color:{composite_colour}; font-size:1.5rem;'>{comp_display}</div>
+            <div class='metric-delta' style='color:#64748b; font-size:0.66rem;'>Ordinal band · Class C</div>
+            <div class='metric-delta' style='color:#f59e0b; font-size:0.66rem;'>{partial_note}</div>
         </div>""", unsafe_allow_html=True)
 
     with kpi2:
-        below_count = len(below_mic_drugs)
-        bc_color = "#ef4444" if below_count > 0 else "#10b981"
+        if current_state:
+            state_txt, state_col = STATE_META.get(current_state, ("—", "#64748b"))
+        else:
+            state_txt, state_col = ("Not modelled", "#64748b")
         st.markdown(f"""
         <div class='metric-card'>
-            <h3>Drugs Below MIC</h3>
-            <div class='metric-value' style='color:{bc_color};'>{below_count}/{len(active_drugs)}</div>
-            <div class='metric-delta' style='color:#64748b;'>Sub-inhibitory level</div>
+            <h3>Regimen State (now)</h3>
+            <div class='metric-value' style='color:{state_col}; font-size:1.15rem;'>{state_txt}</div>
+            <div class='metric-delta' style='color:#64748b;'>at {hours_missed}h · Class B</div>
         </div>""", unsafe_allow_html=True)
 
     with kpi3:
@@ -1350,17 +1393,20 @@ elif app_view == "Patient Assessment Dashboard":
                     annotation_yshift=10
                 )
 
-            # Resistance window shading
-            fig.add_vrect(
-                x0=hours_missed * 0.85, x1=min(hours_missed * 1.3, t_max_hours),
-                fillcolor="rgba(239,68,68,0.06)", line_width=0,
-                annotation_text="Resistance Window",
-                annotation_position="top right",
-                annotation_font_color="#ef4444",
-                annotation_font_size=10,
-                annotation_yshift=-12,
-                row=1, col=1
-            )
+            # The v4.0 "resistance window" shading (hours_missed × 0.85 to × 1.3) had no
+            # pharmacological basis and is removed (§4.4). The functional-monotherapy
+            # window, when one exists, is shaded from the state classification instead.
+            if mono_window:
+                fig.add_vrect(
+                    x0=mono_window[0], x1=min(mono_window[1], t_max_hours),
+                    fillcolor="rgba(239,68,68,0.10)", line_width=0,
+                    annotation_text="Monotherapy window",
+                    annotation_position="top right",
+                    annotation_font_color="#ef4444",
+                    annotation_font_size=10,
+                    annotation_yshift=-12,
+                    row=1, col=1
+                )
 
             fig.update_layout(
                 plot_bgcolor="#0a0e1a",
@@ -1406,6 +1452,57 @@ elif app_view == "Patient Assessment Dashboard":
                 """, unsafe_allow_html=True)
             else:
                 st.plotly_chart(fig, width="stretch")
+
+                # ── Regimen-state band along the time axis (methodology §8.3) ──
+                st.markdown("<p class='section-header'>Regimen State — Selection Pressure</p>",
+                            unsafe_allow_html=True)
+                # Contiguous runs of state across the modelled window.
+                runs = []
+                for t, state in state_series:
+                    if runs and runs[-1][2] == state:
+                        runs[-1][1] = t
+                    else:
+                        runs.append([t, t, state])
+                total = max((r[1] for r in runs), default=1) or 1
+                segs = ""
+                for t0, t1, state in runs:
+                    span = (t1 - t0) + 1
+                    txt, col = STATE_META.get(state, ("—", "#64748b"))
+                    segs += (
+                        f"<div title='{txt}: {t0}–{t1}h' style='flex:{span}; background:{col};"
+                        f" height:26px; border-right:1px solid #0a0e1a;'></div>"
+                    )
+                st.markdown(f"""
+                <div style='display:flex; width:100%; border-radius:6px; overflow:hidden;
+                            border:1px solid #1e3a5f;'>{segs}</div>
+                <div style='display:flex; justify-content:space-between; font-size:0.62rem;
+                            color:#64748b; margin-top:0.2rem;'>
+                    <span>0 h</span><span>{int(total)} h</span>
+                </div>
+                <div style='font-size:0.66rem; color:#f59e0b; margin-top:0.4rem;'>
+                    Tier B active cut-off f(t) ≥ {ACTIVITY_CUTOFF:.2f} is <strong>Class C</strong>,
+                    hand-chosen and the weakest element of this output (methodology §8.2).
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Legend + monotherapy window summary.
+                legend = " &nbsp; ".join(
+                    f"<span style='color:{col};'>■</span> {txt}"
+                    for txt, col in [STATE_META[s] for s in
+                                     (sel.FULL_SUPPRESSION, sel.PARTIAL_SUPPRESSION,
+                                      sel.FUNCTIONAL_MONOTHERAPY, sel.NO_PRESSURE)]
+                )
+                st.markdown(f"<div style='font-size:0.66rem; color:#94a3b8; margin-top:0.3rem;'>{legend}</div>",
+                            unsafe_allow_html=True)
+                if mono_window:
+                    ms, me, md = mono_window
+                    st.markdown(f"""
+                    <div class='alert-critical' style='margin-top:0.5rem;'>
+                        <strong>Functional monotherapy window:</strong> {ms}–{me} h
+                        (duration {md} h). One component active while the others have cleared —
+                        the highest resistance-selection risk (methodology §8.1).
+                    </div>
+                    """, unsafe_allow_html=True)
 
         with col_status:
             st.markdown("<p class='section-header'>Drug Status Panel</p>", unsafe_allow_html=True)
@@ -1504,41 +1601,30 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
 
-            # ── Mini Risk Gauge ──
-            fig_gauge = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=risk_score,
-                domain={'x': [0, 1], 'y': [0, 1]},
-                title={'text': "Risk Score", 'font': {'color': '#94a3b8', 'size': 12}},
-                number={'font': {'color': risk_color, 'size': 28}},
-                gauge={
-                    'axis': {
-                        'range': [0, 100],
-                        'tickcolor': '#334155',
-                        'tickfont': {'size': 9, 'color': '#475569'}
-                    },
-                    'bar': {'color': risk_color, 'thickness': 0.25},
-                    'bgcolor': '#0a0e1a',
-                    'bordercolor': '#1e3a5f',
-                    'steps': [
-                        {'range': [0, 40],  'color': '#022c22'},
-                        {'range': [40, 70], 'color': '#2d1b00'},
-                        {'range': [70, 100],'color': '#2d0000'},
-                    ],
-                    'threshold': {
-                        'line': {'color': '#ef4444', 'width': 2},
-                        'thickness': 0.8,
-                        'value': risk_score
-                    }
-                }
-            ))
-            fig_gauge.update_layout(
-                plot_bgcolor="#0d1b2e",
-                paper_bgcolor="#0d1b2e",
-                height=200,
-                margin=dict(l=10, r=10, t=30, b=10)
-            )
-            st.plotly_chart(fig_gauge, width="stretch")
+            # ── Composite band (ordinal, no gauge — §10.2) ──
+            if composite_contribs:
+                c = composite_contribs
+                state_txt = STATE_META.get(c["state"], ("—", "#64748b"))[0]
+                contrib_html = (
+                    f"state {state_txt} (severity {c['state_sev']}) · "
+                    f"max mutation index {c['mutation']} · VL band {c['viral_load']} · "
+                    f"CD4 band {c['cd4']}"
+                )
+            else:
+                contrib_html = "Not computable (regimen contains an indeterminate component or the curve is suppressed)."
+            st.markdown(f"""
+            <div class='metric-card' style='text-align:center;'>
+                <div style='font-size:0.7rem; color:#64748b; text-transform:uppercase;
+                            letter-spacing:0.1em;'>Composite Risk Band</div>
+                <div style='font-size:1.6rem; font-weight:700; color:{composite_colour}; margin:0.3rem 0;'>
+                    {composite_label if composite_label else '—'}
+                </div>
+                <div style='font-size:0.66rem; color:#f59e0b;'>Class C — hand-chosen weights, not a calibrated 0–100 score</div>
+                <div style='font-size:0.66rem; color:#94a3b8; margin-top:0.4rem; line-height:1.5;'>
+                    {contrib_html}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # ────────────────────────────────────────────────────────────
     # TAB 2: MUTATION & CROSS-RESISTANCE PREDICTOR
@@ -1551,96 +1637,70 @@ elif app_view == "Patient Assessment Dashboard":
         col_mut1, col_mut2 = st.columns([1.5, 1])
 
         with col_mut1:
-            mutation_data = []
-            for drug in active_drugs:
-                stats = pk_db.get(drug)
-                # A concentration ratio needs both a modelled level and a threshold,
-                # so only tier A drugs appear here (methodology section 3.4).
-                if not stats or drug not in current_levels or "threshold_mg_L" not in stats:
-                    continue
-                lvl = current_levels[drug]
-                mic = stats["threshold_mg_L"]
-                ratio = lvl / mic
-
-                # Ordinal selection-pressure label (direction only, no probability).
-                if ratio >= 2.0:
-                    pressure = "SUPPRESSED"
-                    p_color  = "#10b981"
-                elif ratio >= 1.0:
-                    pressure = "MARGINAL"
-                    p_color  = "#3b82f6"
-                elif ratio >= 0.05:
-                    pressure = "HIGH"
-                    p_color  = "#f59e0b"
-                else:
-                    pressure = "CRITICAL"
-                    p_color  = "#ef4444"
-
-                cross_res = ", ".join(stats.get("cross_resistance", ["None"]))
-
-                mutation_data.append({
-                    "drug":      drug,
-                    "class":     stats["class"],
-                    "mutation":  stats["mutation"],
-                    "cross_res": cross_res,
-                    "pressure":  pressure,
-                    "p_color":   p_color,
-                    "ratio":     ratio
-                })
-
-            # The fabricated "Estimated Mutation Emergence Probability" bar chart and its
-            # 50% "Clinical Threshold" line were removed in v5.0 (methodology 9.1). A
-            # validated ordinal mutation-risk index replaces it in a later stage; until
-            # then this space intentionally shows no number.
-            st.markdown("""
-            <div class='alert-info'>
-                <div style='font-weight:600; font-size:0.82rem;'>
-                    Mutation-risk index pending
-                </div>
-                <div style='font-size:0.78rem; margin-top:0.3rem; line-height:1.6;'>
-                    The previous percentage output has been removed because it was not derived
-                    from any data (methodology &sect;9.1). An ordinal, clearly labelled index
-                    replaces it in a later release. No probability is shown here in the interim.
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # ── Cross-Resistance Map ──
-            st.markdown("<p class='section-header'>Cross-Resistance Cascade Analysis</p>",
+            st.markdown("<p class='section-header'>Mutation Risk Index — Ordinal (§9.2)</p>",
                         unsafe_allow_html=True)
 
-            for m in mutation_data:
+            _INDEX_COLOR = {"Minimal": "#10b981", "Low": "#3b82f6", "Moderate": "#f59e0b",
+                            "High": "#ef4444", "Indeterminate": "#a855f7"}
+            _EXP_TXT = {0: "0 — active throughout", 1: "1 — fell below threshold",
+                        2: "2 — sole active agent at some point"}
+            _BAR_TXT = {0: "0 — high", 1: "1 — intermediate", 2: "2 — low"}
+            index_by_drug = {r["name"]: r for r in mutation_rows}
+
+            if not mutation_rows:
+                st.markdown("""
+                <div class='alert-info'>
+                    <div style='font-size:0.8rem;'>No mutation index: the decay model is
+                    suppressed for this patient (see the PK Decay tab).</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            for drug in active_drugs:
+                stats = pk_db.get(drug)
+                row = index_by_drug.get(drug)
+                if not stats or row is None:
+                    continue
+                cross_res = ", ".join(stats.get("cross_resistance", ["None"]))
+                col = _INDEX_COLOR.get(row["label"], "#64748b")
+                if row["numeric"] is None:
+                    items = ("Indeterminate — this regimen contains a component with no decay "
+                             "curve (methodology §4.5), so exposure level cannot be determined.")
+                else:
+                    items = (f"Exposure level {_EXP_TXT.get(row['exposure'], '—')} "
+                             f"&nbsp;+&nbsp; barrier level {_BAR_TXT.get(row['barrier'], '—')} "
+                             f"&nbsp;=&nbsp; <strong>{row['numeric']}</strong>")
                 st.markdown(f"""
                 <div class='metric-card'>
                     <div style='display:flex; justify-content:space-between; align-items:flex-start;'>
                         <div>
-                            <span class='drug-badge'>{m["drug"]}</span>
+                            <span class='drug-badge'>{drug}</span>
                             <span style='background:#1a0a2e; color:#c084fc; border:1px solid #7c3aed;
                                          border-radius:20px; padding:0.2rem 0.7rem; font-size:0.72rem;
-                                         font-weight:600; margin-left:0.4rem;'>{m["class"]}</span>
+                                         font-weight:600; margin-left:0.4rem;'>{stats["class"]}</span>
                             <div style='margin-top:0.5rem; font-size:0.88rem;'>
-                                <span style='color:#64748b;'>Primary Mutation Risk: </span>
-                                <span style='color:#fbbf24; font-weight:700; font-size:1rem;'>
-                                    {m["mutation"]}
-                                </span>
+                                <span style='color:#64748b;'>Signature mutation: </span>
+                                <span style='color:#fbbf24; font-weight:700;'>{stats["mutation"]}</span>
                             </div>
-                            <div style='font-size:0.78rem; color:#64748b; margin-top:0.2rem;'>
-                                Cross-resistance cascade → &nbsp;
-                                <span style='color:#94a3b8;'>{m["cross_res"]}</span>
+                            <div style='font-size:0.75rem; color:#64748b; margin-top:0.2rem;'>
+                                Cross-resistance → <span style='color:#94a3b8;'>{cross_res}</span>
                             </div>
+                            <div style='font-size:0.72rem; color:#94a3b8; margin-top:0.4rem;'>{items}</div>
                         </div>
                         <div style='text-align:right;'>
-                            <div style='font-size:0.65rem; color:#64748b;'>Selection Pressure</div>
-                            <div style='color:{m["p_color"]}; font-weight:700; font-size:1.1rem;'>
-                                {m["pressure"]}
-                            </div>
-                            <div style='font-size:0.7rem; color:#64748b;'>
-                                Conc/MIC ratio: {m["ratio"]:.3f}×
-                            </div>
+                            <div style='font-size:0.65rem; color:#64748b;'>Mutation index</div>
+                            <div style='color:{col}; font-weight:700; font-size:1.15rem;'>{row["label"]}</div>
                         </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+            st.markdown("""
+            <div style='font-size:0.68rem; color:#f59e0b; margin-top:0.5rem;'>
+                Ordinal heuristic. Not a probability. Not validated against outcome data.
+                Genetic barrier is included deliberately: M184V under lamivudine and R263K under
+                dolutegravir cannot share a risk curve (methodology §9.3).
+            </div>
+            """, unsafe_allow_html=True)
 
         with col_mut2:
             st.markdown("<p class='section-header'>Mutation Intelligence Cards</p>",
@@ -1923,48 +1983,63 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
 
-        # ── Sub-MIC Mutation Pressure Alerts ──
-        for drug in vulnerable_drugs:
+        # ── State-driven directives (replaces the sub-MIC / cleared alerts, §8) ──
+        if state_available and current_state == sel.FUNCTIONAL_MONOTHERAPY and mono_window:
             directives_fired += 1
-            stats = pk_db[drug]
-            mut = stats["mutation"]
+            ms, me, md = mono_window
+            sole = [c["name"] for c in components if sel.active_at(c, hours_missed, ACTIVITY_CUTOFF) is True]
+            sole_name = sole[0] if len(sole) == 1 else ", ".join(sole)
             st.markdown(f"""
-            <div class='alert-warning'>
+            <div class='alert-critical'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                   SUB-INHIBITORY PRESSURE — {drug.upper()} / {mut} RISK
+                   FUNCTIONAL MONOTHERAPY — HIGHEST RESISTANCE-SELECTION RISK
                 </div>
                 <div style='font-size:0.82rem; line-height:1.7;'>
-                    <strong>{drug}</strong> plasma concentration is in the sub-inhibitory range
-                    (above detection, below MIC). This is the most dangerous pharmacokinetic window —
-                    viral replication is occurring in the presence of drug, which is the exact
-                    condition required for <strong>resistance mutation selection</strong>.<br><br>
-                   <strong>Primary Mutation Risk:</strong>
-                    <span style='color:#fde68a; font-weight:700;'>{mut}</span><br>
-                   <strong>Immediate Action:</strong> Supervised re-dosing required within 6 hours.
-                    Order point-of-care viral load to establish current replication status.
+                    Only <strong>{sole_name}</strong> remains active; the other components have
+                    cleared. A single active agent under continued replication is the exact
+                    condition that selects resistance (methodology &sect;8.1). Monotherapy window
+                    approximately <strong>{ms}–{me} h</strong> (duration {md} h).<br>
+                   <strong>Action:</strong> Restart the full regimen simultaneously; do not restart
+                    a single component. Order a viral load.<br>
+                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-        # ── Below Detection Alerts ──
-        for drug in below_mic_drugs:
-            if drug not in vulnerable_drugs:
-                directives_fired += 1
-                st.markdown(f"""
-                <div class='alert-critical'>
-                    <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
-                       CRITICAL — {drug.upper()} CLEARED FROM PLASMA
-                    </div>
-                    <div style='font-size:0.82rem; line-height:1.7;'>
-                        <strong>{drug}</strong> has been fully cleared. Zero pharmacological protection.
-                        Patient is functionally without ART coverage for this component.<br><br>
-                       <strong>Immediate Protocol:</strong> Do not restart mono-therapy.
-                        Restart full regimen simultaneously. If defaulted >72h and CD4 <200,
-                        initiate enhanced OI prophylaxis. Alert community health worker for
-                        home visit.
-                    </div>
+        elif state_available and current_state == sel.NO_PRESSURE:
+            directives_fired += 1
+            st.markdown(f"""
+            <div class='alert-warning'>
+                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                   NO ACTIVE DRUG — VIRAL REBOUND RISK (LOW SELECTION PRESSURE)
                 </div>
-                """, unsafe_allow_html=True)
+                <div style='font-size:0.82rem; line-height:1.7;'>
+                    Every modelled component has cleared. There is no differential advantage for a
+                    resistant variant, so <strong>selection risk is low</strong>, but the patient is
+                    without antiretroviral cover and wild-type virus will rebound (methodology &sect;8.1).<br>
+                   <strong>Action:</strong> Restart the full regimen; assess for OI risk if CD4 is low.<br>
+                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        elif state_available and current_state == sel.PARTIAL_SUPPRESSION and mono_window:
+            # Not currently in monotherapy, but the window lies ahead in the modelled horizon.
+            directives_fired += 1
+            ms, me, md = mono_window
+            st.markdown(f"""
+            <div class='alert-warning'>
+                <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
+                   MONOTHERAPY WINDOW AHEAD — REDUCED BARRIER TO RESISTANCE
+                </div>
+                <div style='font-size:0.82rem; line-height:1.7;'>
+                    Components are clearing at different rates. On the modelled trajectory a
+                    functional-monotherapy window opens at approximately <strong>{ms}–{me} h</strong>
+                    (duration {md} h) since the last dose.<br>
+                   <strong>Action:</strong> Re-establish full adherence before that window; counsel on
+                    the resistance risk of partial re-dosing.<br>
+                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # ── No directives ──
         # Never render a green all-clear while any regimen component is outside the
@@ -2272,12 +2347,13 @@ elif app_view == "Patient Assessment Dashboard":
                 "PHARMACOVIGILANCE ALERT",
                 "Traditional medicine interaction flagged. Counselling required.",
                 "WARNING"))
-        for drug in below_mic_drugs:
-            raw_events.append((
-                "EFFICACY THRESHOLD BREACH",
-                f"{drug} modelled concentration below its efficacy threshold. "
-                f"Signature mutation: {pk_db[drug]['mutation']}.",
-                "CRITICAL"))
+        if state_available and current_state:
+            state_txt = STATE_META.get(current_state, (current_state, ""))[0]
+            level = "CRITICAL" if current_state == sel.FUNCTIONAL_MONOTHERAPY else "INFO"
+            detail = f"Regimen state at {hours_missed}h: {state_txt}."
+            if mono_window:
+                detail += f" Monotherapy window {mono_window[0]}-{mono_window[1]}h."
+            raw_events.append(("REGIMEN STATE CLASSIFIED", detail, level))
         raw_events.append((
             "LABORATORY VALUES RECORDED",
             f"Viral load: {viral_load:,} cp/mL | CD4: {cd4_count} cells/uL",
@@ -2446,7 +2522,9 @@ PHARMACOKINETIC SUMMARY
 -----------------------
 Regimen: {regimen}
 Days Defaulted: {days_missed}
-Risk Score: {risk_score}/100 ({risk_label})
+Composite Risk Band: {composite_label or 'n/a'} (ordinal, Class C — not a calibrated 0-100 score)
+Regimen State (at {hours_missed}h): {STATE_META.get(current_state, ('not modelled', ''))[0] if current_state else 'not modelled'}
+Monotherapy Window: {f'{mono_window[0]}-{mono_window[1]}h (duration {mono_window[2]}h)' if mono_window else 'none in the modelled horizon'}
 
 DRUG LEVELS AT ASSESSMENT
 --------------------------

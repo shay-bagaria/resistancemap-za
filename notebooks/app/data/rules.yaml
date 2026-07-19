@@ -13,21 +13,25 @@ regimens:
   - display: "ABC/3TC/DTG (Abacavir + Lamivudine + Dolutegravir)"
     components: [Abacavir, Lamivudine, Dolutegravir]
 
-# Composite risk-score weights (methodology section 10). Hand-chosen, class C.
-# The whole score is restructured in Stage 4 (section 10.2); unchanged in Stage 2.
-risk_score_weights:
+# Composite score (methodology section 10.2). Hand-chosen weights, class C.
+# Restructured in Stage 4: paediatric status removed (being a child is not a
+# resistance risk factor); TB and herbal use removed as direct terms (their
+# effect already enters through the decay curves; adding them double-counts).
+composite_score:
   classification: C
-  status: pending_restructure
+  status: active
   methodology_section: "10.2"
-  per_day_missed: 6
-  per_below_threshold_drug: 15
-  per_vulnerable_drug: 10
-  tb_coinfection: 12
-  traditional_meds: 8
-  viral_load_gt_1000: 10
-  cd4_lt_200: 8
-  paediatric: 5
-  cap: 100
+  weights:
+    state: 3          # w_state × state_severity (monotherapy weighted highest)
+    mutation: 2       # w_mut × max mutation index across drugs
+    viral_load: 1     # w_vl × viral-load band
+    immune: 1         # w_immune × CD4 band
+  # Raw weighted sum -> ordinal band (min is the inclusive lower bound). No n/100.
+  bands:
+    - {min: 0,  label: "Minimal",  colour: "#10b981"}
+    - {min: 3,  label: "Low",      colour: "#3b82f6"}
+    - {min: 7,  label: "Moderate", colour: "#f59e0b"}
+    - {min: 11, label: "High",     colour: "#ef4444"}
 
 # Adherence / support heuristic weights (methodology section 11). Class C.
 # Restructured into a support-needs panel in Stage 5 (section 11.2); unchanged now.
