@@ -49,11 +49,15 @@ composite_score:
     - {min: 10, label: "Moderate", colour: "#f59e0b"}
     - {min: 13, label: "High",     colour: "#ef4444"}
 
-# Adherence / support heuristic weights (methodology section 11). Class C.
-# Restructured into a support-needs panel in Stage 5 (section 11.2); unchanged now.
+# RETIRED in Stage 5 (methodology section 11.2). Kept only as the historical
+# record of what v4.0/Stages 1-4 scored: unemployment, walking to the clinic, no
+# reliable transport, non-disclosure, food insecurity and a taxi strike summed
+# into a single "predicted default risk" percentage, with an itemised chart
+# showing which disadvantages produced it. No longer read by the application —
+# see support_needs below, which replaces it.
 adherence_weights:
   classification: C
-  status: pending_restructure
+  status: restructured
   methodology_section: "11.2"
   per_day_missed: 5
   per_km_distance: 0.6
@@ -75,6 +79,22 @@ adherence_weights:
     "Partially disclosed": 10
     "Non-disclosed": 22
   cap: 100
+
+# Support needs (methodology section 11.2). Class C, hand-chosen trigger
+# thresholds. Socio-economic inputs expressed as service entitlements, not a
+# risk score: distance/transport/strike -> multi-month dispensing + transport
+# support; missed appointments -> CHW contact; food insecurity -> nutritional
+# referral. Non-disclosure is deliberately absent from this table: it drives no
+# trigger and appears in no entitlement, so it cannot contribute a score or be
+# displayed (section 11.1 - safeguarding, intimate-partner-violence risk on a
+# screen that may be shared).
+support_needs:
+  classification: C
+  status: active
+  methodology_section: "11.2"
+  triggers:
+    distance_km_threshold: 20   # km; >= this contributes to the transport trigger
+    missed_appts_threshold: 2   # in the last 12 months; >= this triggers CHW contact
 
 # KPI-strip laboratory thresholds (methodology section 8 / dashboard).
 viral_load_bands:

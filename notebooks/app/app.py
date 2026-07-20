@@ -142,7 +142,6 @@ RULES = DATA["rules.yaml"]
 INTERACTIONS = {x["id"]: x for x in DATA["interactions.yaml"]["interactions"]}
 REGIMENS = {r["display"]: r["components"] for r in RULES["regimens"]}
 COMPOSITE = RULES["composite_score"]
-ADH_W = RULES["adherence_weights"]
 VL_BANDS = RULES["viral_load_bands"]
 CD4_BANDS = RULES["cd4_bands"]
 
@@ -2138,180 +2137,99 @@ elif app_view == "Patient Assessment Dashboard":
         """, unsafe_allow_html=True)
 
     # ────────────────────────────────────────────────────────────
-    # TAB 4: ADHERENCE RISK ENGINE
+    # TAB 4: CLINICAL RISK & SUPPORT NEEDS
+    #
+    # Restructured in Stage 5 (methodology §11.2). The v4.0 / Stage-1-4 tab
+    # summed socio-economic facts (unemployment, walking to clinic, no
+    # transport, non-disclosure, food insecurity, a taxi strike) into a single
+    # "Predicted Default Risk" percentage and rendered a bar chart itemising
+    # which disadvantages produced it. Three objections drove the redesign
+    # (§11.1): it encodes poverty as patient risk (a patient who is unemployed,
+    # walks to the clinic and has not disclosed accumulates points before any
+    # clinical fact enters the calculation); non-disclosure carries safeguarding
+    # weight (a patient may not have disclosed because of intimate-partner-
+    # violence risk, and scoring that on a screen that may be visible in a
+    # shared consulting space is a potential safety issue independent of any
+    # question about model accuracy); and the itemised chart makes the
+    # reasoning visible in the wrong direction — the explanation shown to the
+    # patient was a ranked list of their disadvantages.
+    #
+    # This tab now has two panels. Clinical risk draws only on the
+    # pharmacokinetic and laboratory inputs already computed above (the same
+    # composite band as Tab 1 — nothing new is calculated here). Support needs
+    # draws on the socio-economic inputs, retained because the underlying
+    # observation is sound (transport, cost and disclosure genuinely affect
+    # whether people collect medication), but expressed as service
+    # entitlements rather than a risk score. Non-disclosure contributes no
+    # score and gets no itemised display anywhere patient-visible: adherence
+    # counselling is shown as a standing offer to every patient regardless of
+    # what they answered, so its presence on screen cannot be read as a signal
+    # of any individual patient's disclosure status.
     # ────────────────────────────────────────────────────────────
     with tab4:
-        st.markdown("<p class='section-header'>Adherence & Support Screening — Heuristic (Class C)</p>",
-                    unsafe_allow_html=True)
-
         col_ai1, col_ai2 = st.columns([1, 1])
 
         with col_ai1:
-            # ── Simulated Risk Factor Inputs ──
-            st.markdown("""
-            <div class='metric-card'>
-                <div style='font-size:0.72rem; color:#3b82f6; font-weight:600;
-                            text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.8rem;'>
-                    Patient Risk Factor Profile
-                </div>
-            """, unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            distance_km = st.slider("Distance from Clinic (km)", 0, 80, 22)
-            missed_appts = st.slider("Missed Appointments (last 12m)", 0, 12, 2)
-            employment = st.selectbox("Employment Status",
-                ["Employed (formal)", "Employed (informal)", "Unemployed", "Grant recipient"])
-            transport = st.selectbox("Primary Transport",
-                ["Private vehicle", "Taxi/minibus", "Walking", "No reliable transport"])
-            taxi_strike = st.checkbox("Active Taxi Strike in District")
-            food_insecurity = st.checkbox("Food Insecurity Reported")
-            disclosure = st.selectbox("HIV Status Disclosure",
-                ["Fully disclosed", "Partially disclosed", "Non-disclosed"])
-
-            # ── Hand-weighted heuristic screen (class C, not a trained model) ──
-            # Weights relocated to rules.yaml (methodology section 11); arithmetic
-            # unchanged. Restructured into a support-needs panel in Stage 5.
-            aw = ADH_W
-            adherence_risk = 0
-            adherence_risk += days_missed * aw["per_day_missed"]
-            adherence_risk += distance_km * aw["per_km_distance"]
-            adherence_risk += missed_appts * aw["per_missed_appt"]
-            adherence_risk += aw["employment"].get(employment, 0)
-            adherence_risk += aw["transport"].get(transport, 0)
-            if taxi_strike:     adherence_risk += aw["taxi_strike"]
-            if food_insecurity: adherence_risk += aw["food_insecurity"]
-            adherence_risk += aw["disclosure"].get(disclosure, 0)
-            adherence_risk = min(adherence_risk, aw["cap"])
-
-            if adherence_risk >= 65:
-                ar_label = "VERY HIGH RISK"
-                ar_color = "#ef4444"
-                ar_action = "Immediate community health worker dispatch"
-            elif adherence_risk >= 40:
-                ar_label = "ELEVATED RISK"
-                ar_color = "#f59e0b"
-                ar_action = "WhatsApp reminder + call-back within 48h"
-            elif adherence_risk >= 20:
-                ar_label = "MODERATE RISK"
-                ar_color = "#3b82f6"
-                ar_action = "Automated WhatsApp reminder sequence"
-            else:
-                ar_label = "LOW RISK"
-                ar_color = "#10b981"
-                ar_action = "Standard appointment reminder"
-
-            # Adherence risk gauge
-            fig_ad = go.Figure(go.Indicator(
-                mode="gauge+number+delta",
-                value=adherence_risk,
-                delta={'reference': 40, 'increasing': {'color': '#ef4444'},
-                       'decreasing': {'color': '#10b981'}},
-                domain={'x': [0, 1], 'y': [0, 1]},
-                title={'text': "Predicted Default Risk Score", 'font': {'color': '#94a3b8', 'size': 13}},
-                number={'font': {'color': ar_color, 'size': 40}, 'suffix': '%'},
-                gauge={
-                    'axis': {'range': [0, 100], 'tickfont': {'size': 9, 'color': '#475569'}},
-                    'bar': {'color': ar_color},
-                    'bgcolor': '#0a0e1a',
-                    'bordercolor': '#1e3a5f',
-                    'steps': [
-                        {'range': [0, 20],  'color': '#022c22'},
-                        {'range': [20, 40], 'color': '#0c2340'},
-                        {'range': [40, 65], 'color': '#2d1b00'},
-                        {'range': [65, 100],'color': '#2d0000'},
-                    ],
-                }
-            ))
-            fig_ad.update_layout(
-                plot_bgcolor="#0d1b2e",
-                paper_bgcolor="#0d1b2e",
-                height=260,
-                margin=dict(l=10, r=10, t=40, b=10)
-            )
-            st.plotly_chart(fig_ad, width="stretch")
-
+            st.markdown("<p class='section-header'>Clinical Risk — PK & Laboratory Only</p>",
+                        unsafe_allow_html=True)
             st.markdown(f"""
-            <div class='alert-{"critical" if adherence_risk >= 65 else "warning" if adherence_risk >= 40 else "info" if adherence_risk >= 20 else "success"}'>
-                <div style='font-weight:700;'>
-                    {ar_label} — Predicted Default Probability: {adherence_risk:.0f}%
+            <div class='metric-card' style='text-align:center;'>
+                <div style='font-size:0.7rem; color:#64748b; text-transform:uppercase;
+                            letter-spacing:0.1em;'>Composite Risk Band</div>
+                <div style='font-size:1.6rem; font-weight:700; color:{composite_colour}; margin:0.3rem 0;'>
+                    {composite_label if composite_label else '—'}
                 </div>
-                <div style='font-size:0.8rem; margin-top:0.4rem;'>
-                   <strong>Recommended Action:</strong> {ar_action}
+                <div style='font-size:0.66rem; color:#f59e0b;'>Class C — see the PK Decay Curves tab for the full derivation</div>
+                <div style='font-size:0.72rem; color:#94a3b8; margin-top:0.6rem; text-align:left; line-height:1.7;'>
+                    Regimen state: <strong>{STATE_META.get(current_state, ('not modelled', ''))[0] if current_state else 'not modelled'}</strong><br>
+                    Viral load: <strong>{viral_load:,} cp/mL</strong><br>
+                    CD4 count: <strong>{cd4_count:,} cells/&micro;L</strong><br>
+                    Days since last dose: <strong>{days_missed}</strong>
+                </div>
+                <div style='font-size:0.68rem; color:#64748b; margin-top:0.6rem;'>
+                    Draws only on pharmacokinetic and laboratory inputs. No socio-economic
+                    factor contributes to this panel (methodology &sect;11.2).
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
         with col_ai2:
-            # ── Feature Importance Chart ──
-            st.markdown("<p class='section-header'>Risk Factor Contribution Analysis</p>",
+            st.markdown("<p class='section-header'>Support Needs — Entitlements, Not a Score</p>",
                         unsafe_allow_html=True)
 
-            factors = {
-                "Days Defaulted":        days_missed * aw["per_day_missed"],
-                "Distance from Clinic":  distance_km * aw["per_km_distance"],
-                "Missed Appointments":   missed_appts * aw["per_missed_appt"],
-                "Employment Status":     aw["employment"].get(employment, 0),
-                "Transport Access":      aw["transport"].get(transport, 0),
-                "Taxi Strike Active":    aw["taxi_strike"] if taxi_strike else 0,
-                "Food Insecurity":       aw["food_insecurity"] if food_insecurity else 0,
-                "HIV Disclosure":        aw["disclosure"].get(disclosure, 0),
-            }
-            factors = {k: v for k, v in sorted(factors.items(), key=lambda x: x[1], reverse=True) if v > 0}
+            distance_km = st.slider("Distance from Clinic (km)", 0, 80, 22)
+            missed_appts = st.slider("Missed Appointments (last 12m)", 0, 12, 2)
+            transport = st.selectbox("Primary Transport",
+                ["Private vehicle", "Taxi/minibus", "Walking", "No reliable transport"])
+            taxi_strike = st.checkbox("Active Taxi Strike in District")
+            food_insecurity = st.checkbox("Food Insecurity Reported")
+            disclosure = st.selectbox("HIV Status Disclosure",
+                ["Fully disclosed", "Partially disclosed", "Non-disclosed"],
+                help="Recorded for the clinician's own counselling notes. This answer "
+                     "does not appear anywhere else on screen or in any export "
+                     "(methodology §11.1).")
 
-            if factors:
-                fig_feat = go.Figure(go.Bar(
-                    x=list(factors.values()),
-                    y=list(factors.keys()),
-                    orientation='h',
-                    marker=dict(
-                        color=list(factors.values()),
-                        colorscale=[[0, '#1d4ed8'], [0.5, '#f59e0b'], [1, '#ef4444']],
-                        showscale=False
-                    ),
-                    text=[f"+{v:.0f}" for v in factors.values()],
-                    textposition='outside',
-                    textfont=dict(color='#94a3b8', size=10)
-                ))
-                fig_feat.update_layout(
-                    plot_bgcolor="#0a0e1a",
-                    paper_bgcolor="#0d1b2e",
-                    font=dict(family="Inter", color="#94a3b8", size=10),
-                    xaxis=dict(gridcolor="#0f2237", title="Risk Score Contribution"),
-                    yaxis=dict(gridcolor="#0f2237"),
-                    height=300,
-                    margin=dict(l=0, r=40, t=10, b=0)
-                )
-                st.plotly_chart(fig_feat, width="stretch")
+            sn = RULES.get("support_needs", {})
+            trig = sn.get("triggers", {})
+            transport_trigger = (
+                distance_km >= trig.get("distance_km_threshold", 20)
+                or transport in ("Walking", "No reliable transport")
+                or taxi_strike
+            )
+            chw_trigger = missed_appts >= trig.get("missed_appts_threshold", 2)
 
-            # ── Intervention Protocol ──
-            st.markdown("<p class='section-header'>Automated Intervention Protocol</p>",
-                        unsafe_allow_html=True)
+            entitlements = []
+            if transport_trigger:
+                entitlements.append(("Multi-month dispensing", "Eligible — reduces transport burden at future visits."))
+                entitlements.append(("Transport support", "Indicated — distance, transport mode or a local disruption."))
+            if chw_trigger:
+                entitlements.append(("Community health worker contact", "May benefit this patient — missed-appointment history."))
+            if food_insecurity:
+                entitlements.append(("Nutritional support referral", "Indicated — food insecurity reported."))
+            # Standing offer: rendered unconditionally, see the module note above.
+            entitlements.append(("Adherence counselling", "Available to every patient on request."))
 
-            # These are suggested actions for the clinic team. The prototype does not
-            # dispatch messages, contact workers, or submit laboratory orders.
-            interventions = []
-            if adherence_risk >= 65:
-                interventions = [
-                    ("CHW Home Visit", "Consider a community health worker home visit."),
-                    ("Appointment Reminder", "Consider a reminder for medication collection."),
-                    ("Clinic Call-Back", "Consider assigning an adherence counsellor."),
-                    ("Multi-Month Dispensing", "Consider a 3-month supply to reduce transport burden.")
-                ]
-            elif adherence_risk >= 40:
-                interventions = [
-                    ("Appointment Reminder", "Consider a staged reminder sequence."),
-                    ("Viral Load Review", "Consider reviewing whether a repeat viral load is due.")
-                ]
-            elif adherence_risk >= 20:
-                interventions = [
-                    ("Appointment Reminder", "Consider a standard pre-appointment reminder."),
-                ]
-            else:
-                interventions = [
-                    ("Routine Monitoring", "No enhanced intervention indicated. Standard care pathway.")
-                ]
-
-            for title, desc in interventions:
+            for title, desc in entitlements:
                 st.markdown(f"""
                 <div class='metric-card' style='margin-bottom:0.5rem;'>
                     <div style='font-weight:600; color:#e2e8f0; font-size:0.85rem;'>{title}</div>
@@ -2320,6 +2238,14 @@ elif app_view == "Patient Assessment Dashboard":
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+            st.markdown("""
+            <div style='font-size:0.66rem; color:#64748b; margin-top:0.4rem; line-height:1.5;'>
+                Triggers are class C (hand-chosen thresholds, methodology &sect;11.2). This
+                panel lists what may help; it does not score the patient, and no
+                itemised contribution chart is rendered anywhere in the application.
+            </div>
+            """, unsafe_allow_html=True)
 
     # ────────────────────────────────────────────────────────────
     # TAB 5: AUDIT LOG & COMPLIANCE
@@ -2369,8 +2295,8 @@ elif app_view == "Patient Assessment Dashboard":
             f"Viral load: {viral_load:,} cp/mL | CD4: {cd4_count} cells/uL",
             "INFO"))
         raw_events.append((
-            "ADHERENCE SCREEN COMPUTED",
-            f"Heuristic default score: {adherence_risk:.0f} | Category: {ar_label}",
+            "SUPPORT NEEDS SCREENED",
+            f"Entitlements: {', '.join(t for t, _ in entitlements)}",
             "INFO"))
 
         data_hashes = dict(DATA_HASHES)
@@ -2552,11 +2478,9 @@ African Potato: {"YES – no modelled effect; counsel" if african_potato else "N
 Renal (eGFR): {egfr} mL/min/1.73m2 {"— safety alert" if egfr < 60 else ""}
 Paediatric Protocol: {"YES – Weight-band dosing active" if paediatric else "No"}
 
-ADHERENCE RISK
---------------
-Default Risk Score: {adherence_risk:.0f}%
-Risk Category: {ar_label}
-Recommended Action: {ar_action}
+SUPPORT NEEDS (entitlements, not a score — methodology section 11.2)
+--------------------------------------------------------------------
+{chr(10).join(f"- {t}: {d}" for t, d in entitlements)}
 
 LABORATORY VALUES
 -----------------
