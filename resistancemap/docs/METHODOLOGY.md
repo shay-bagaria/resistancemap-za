@@ -564,9 +564,9 @@ Software informing antiretroviral prescribing falls within the medical-device de
 | 10 | Herbal preparations | Combined, magnitude asserted | Separated, magnitude removed | 3 | 776fb9c |
 | 11 | Hypoxis FBC advice | Attributed to TDF | Removed | 1b | d8505a4 |
 | 12 | Paediatric scaling | Linear | Allometric ^0.25 | 3 | 776fb9c |
-| 13 | MIC terminology | Throughout | PA-IC90 / threshold | 1b, 6 | d8505a4, pending |
+| 13 | MIC terminology | Throughout | PA-IC90 / threshold | 1b, 6 | d8505a4, 4e6f256 |
 | 14 | Genetic barrier | Absent | Included in mutation index | 4 | 159bfc3 |
-| 15 | Adherence model | Scored social disadvantage | Support-needs framing | 5 | pending |
+| 15 | Adherence model | Scored social disadvantage | Support-needs framing | 5 | 898b206 |
 | 16 | Efavirenz–rifampicin | 0.74 multiplier | Removed | 3 | 776fb9c |
 | 17 | Renal multipliers | Fixed per category | eGFR input, scaling disabled | 3 | 776fb9c |
 | 18 | Timestamps | Server local, labelled SAST | Africa/Johannesburg, UTC stored | 1 | 97b121d |
