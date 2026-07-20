@@ -1112,14 +1112,22 @@ elif app_view == "Patient Assessment Dashboard":
             mutation_rows.append({"name": drug, "label": label, "exposure": exp,
                                   "barrier": barrier, "numeric": numeric})
 
-        if has_indeterminate or worst_state == sel.INDETERMINATE:
+        if has_indeterminate or current_state == sel.INDETERMINATE:
             composite_label = "Indeterminate"
         else:
             vl_band = (2 if viral_load > VL_BANDS["high_above"]
                        else 1 if viral_load > VL_BANDS["undetectable_below"] else 0)
             cd4_band = (2 if cd4_count < CD4_BANDS["severe_below"]
                         else 1 if cd4_count < CD4_BANDS["low_below"] else 0)
-            state_sev = sel.STATE_SEVERITY.get(worst_state, 0)
+            # state_sev uses the CURRENT state, not the worst state ever reached.
+            # The mutation index already carries the cumulative "did this ever
+            # happen" signal (§9.2: exposure level 2 = sole active agent at any
+            # point), so state here can reflect live risk. Using worst-ever state
+            # for severity pins the score at its peak forever once any monotherapy
+            # hour has occurred, which is what made Stage 4's composite saturate
+            # by day 3-5 and made every later day indistinguishable (methodology
+            # §10.2, Stage 5 recalibration).
+            state_sev = sel.STATE_SEVERITY.get(current_state, 0)
             max_mut = max((r["numeric"] for r in mutation_rows if r["numeric"] is not None),
                           default=0)
             w = COMPOSITE["weights"]
@@ -1131,9 +1139,9 @@ elif app_view == "Patient Assessment Dashboard":
                     band = b
             composite_label = band["label"]
             composite_colour = band["colour"]
-            composite_contribs = {"state": worst_state, "state_sev": state_sev,
-                                  "mutation": max_mut, "viral_load": vl_band,
-                                  "cd4": cd4_band, "raw": composite_raw}
+            composite_contribs = {"state": current_state, "peak_state": worst_state,
+                                  "state_sev": state_sev, "mutation": max_mut,
+                                  "viral_load": vl_band, "cd4": cd4_band, "raw": composite_raw}
 
     # Human-readable state labels / colours for display.
     STATE_META = {
@@ -1605,8 +1613,10 @@ elif app_view == "Patient Assessment Dashboard":
             if composite_contribs:
                 c = composite_contribs
                 state_txt = STATE_META.get(c["state"], ("—", "#64748b"))[0]
+                peak_txt = STATE_META.get(c["peak_state"], ("—", "#64748b"))[0]
+                peak_note = (f" (peak so far: {peak_txt})" if c["peak_state"] != c["state"] else "")
                 contrib_html = (
-                    f"state {state_txt} (severity {c['state_sev']}) · "
+                    f"current state {state_txt} (severity {c['state_sev']}){peak_note} · "
                     f"max mutation index {c['mutation']} · VL band {c['viral_load']} · "
                     f"CD4 band {c['cd4']}"
                 )

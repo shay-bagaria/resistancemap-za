@@ -388,6 +388,42 @@ Patient on TLE (tenofovir, lamivudine, efavirenz), 14 days missed, no modifiers:
 
 A monotherapy window of roughly nine hours. The width is highly sensitive to the tier B cut-off and to the unverified efavirenz parameters, so the number of hours is not a finding. The existence and ordering of the window is the finding.
 
+### 8.5 TLD produces a tenofovir monotherapy window too
+
+TLE is not the only regimen with a monotherapy window; TLD does too, with a different mechanism. Patient on TLD, no modifiers:
+
+- Lamivudine, 3TC-TP t½ 16 h. f falls below 0.25 at t = ln(4)/(ln2/16) = 32 h.
+- Dolutegravir, plasma t½ 14 h, Cmax,ss 2.34 mg/L, PA-IC90 0.064 mg/L. IQ falls below 1 at t = ln(2.34/0.064)/(ln2/14) ≈ 72.7 h.
+- Tenofovir, TFV-DP t½ 48 h. f falls below 0.25 at t = ln(4)/(ln2/48) = 96 h.
+
+| Window | Active components | State |
+|---|---|---|
+| 0–32 h | TFV, 3TC, DTG | FULL_SUPPRESSION |
+| 32–73 h | TFV, DTG | PARTIAL_SUPPRESSION |
+| 73–96 h | TFV only | **FUNCTIONAL_MONOTHERAPY** |
+| 96 h onward | none | NO_PRESSURE |
+
+Dolutegravir crosses its inhibitory threshold (≈73 h) before tenofovir's exposure fraction falls below the tier B cut-off (96 h), because DTG's plasma t½ (14 h) is much shorter than TFV-DP's intracellular t½ (48 h), even though DTG has the higher genetic barrier. So the anchor drug of the regimen is not the last one standing — the NRTI backbone outlasts it. This is the pharmacokinetic-forgiveness point from §3.3 in reverse: the same long intracellular persistence that protects against missed doses also creates a tenofovir-alone window once the anchor drug has cleared.
+
+### 8.6 The tier B cut-off sweep is non-monotonic, not just sensitive
+
+Sweeping the tier B activity cut-off for the §8.4 TLE example gives:
+
+| Cut-off | Monotherapy window | Width | Surviving drug |
+|---|---|---|---|
+| 0.1 | 106–159 h | 54 h | Tenofovir |
+| 0.2 | 106–111 h | 6 h | Tenofovir |
+| 0.25 | 97–105 h | 8 h | Efavirenz |
+| 0.3 | 84–105 h | 21 h | Efavirenz |
+| 0.4 | 64–105 h | 41 h | Efavirenz |
+| 0.5 | 49–105 h | 56 h | Efavirenz |
+
+Width does not vary monotonically with the cut-off: it falls from 54 h to 6 h between 0.1 and 0.2, then rises again to 56 h between 0.25 and 0.5. There is a single monotherapy episode at every cut-off — the non-monotonicity is not caused by a second episode appearing. It is caused by a **swap in which drug is the survivor**.
+
+Efavirenz's IQ = 1 crossing is fixed at ≈105.3 h regardless of the tier B cut-off (it is tier A). Tenofovir's exposure-fraction crossing moves with the cut-off: t = ln(1/cutoff) / (ln2/48). The two curves cross each other at a **critical cut-off of ≈0.219** — solving ln(1/c)·48/ln2 = 105.3 h. Above that critical value (cut-off ≥ 0.25 in the swept set) tenofovir falls out first and efavirenz is the lone survivor until its own fixed crossing at 105.3 h, so the window widens as the cut-off rises (tenofovir exits earlier, leaving efavirenz alone for longer). Below the critical value (cut-off ≤ 0.2) efavirenz clears first at its fixed 105.3 h and tenofovir — now taking longer to fall below the more lenient cut-off — becomes the survivor instead, so the window widens as the cut-off falls further (tenofovir now persists as the sole active drug for longer past 105.3 h). At the critical cut-off itself the window width goes to zero: the two crossings coincide and there is a single instant, not a window, at which the state passes directly from PARTIAL_SUPPRESSION to NO_PRESSURE.
+
+This is stronger evidence of structural sensitivity than a monotonic "wider cut-off, wider window" relationship would be: the *identity* of the drug driving the resistance-selection warning changes with an unsourced constant, not merely the duration of the warning. A clinician reading "efavirenz monotherapy" versus "tenofovir monotherapy" would reasonably reach for different second-line reasoning (K103N versus K65R), and which one the model reports depends on a cut-off this document cannot source. The §14 sensitivity analysis should therefore report, for each swept cut-off, not just window width but which component survives, and should treat a change in surviving component as a finding in its own right, distinct from a change in width.
+
 ---
 
 ## 9. Mutation risk index — **Class B, ordinal**
@@ -443,7 +479,9 @@ composite = w_state × state_severity
 
 with `state_severity` from §8, ordered so FUNCTIONAL_MONOTHERAPY carries the highest weight. Paediatric status is removed. Tuberculosis co-infection and herbal use are removed as direct terms, since their effect already enters through the decay curves; double-counting them inflates the score. Weights remain hand-chosen, in `data/rules.yaml`, class C. The output is an ordinal band, not a number out of 100, with the class C label adjacent to the value.
 
-**As built** (commit 159bfc3). `state_severity` uses the *worst* state over the elapsed window [0, hours_missed], so a monotherapy window that has already occurred keeps the band high. `viral_load_band` and `cd4_band` are 0/1/2 from the `viral_load_bands`/`cd4_bands` thresholds. If the regimen state is INDETERMINATE the composite is reported as Indeterminate, not a number.
+**As built, Stage 4** (commit 159bfc3). `state_severity` used the *worst* state over the elapsed window [0, hours_missed]. This saturated: once any monotherapy hour had occurred, the worst-ever state was pinned at FUNCTIONAL_MONOTHERAPY for every later hour, so TLD read the same "High" band at 3, 7 and 14 days missed — the composite could not distinguish a three-day defaulter from a fortnight one. This is the same failure shape as the v4.0 `days_missed × 6` term, reached by a different route.
+
+**As built, Stage 5 recalibration** (commit — see §17). `state_severity` now uses the **current** classified state at `hours_missed`, not the worst state ever reached. This is not a loss of information: the cumulative "did this ever happen" signal is still carried by the mutation index, whose exposure level is explicitly defined over "the elapsed window" / "at any point" (§9.2), so a component that was once the sole active agent keeps a high mutation index even after the whole regimen has cleared. Splitting the two terms this way — state reflecting *live* risk, mutation index reflecting *historical* risk — lets the composite fall again once a regimen has fully cleared, which is correct: full clearance is NO_PRESSURE (§8.1, low resistance-selection risk), not the peak, even though it carries a real and separately-flagged rebound risk. Weights changed from `state:3, mutation:2, viral_load:1, immune:1` to `state:3, mutation:1, viral_load:1, immune:1`, and the bands were retuned from `0/3/7/11` to `0/6/10/13` against the required scenario matrix (TLD at 0/1/3/5/7/14 days missed, TLE at 0/3/7/14, each with and without rifampicin, default labs). The resulting raw scores span {4, 8, 9, 11, 14} and reach all four bands: Minimal (day 0–1, both regimens), Moderate (day 3 partial suppression), High (TLD day 3 with rifampicin — the tenofovir/dolutegravir-crossing monotherapy window of §8.5, reached earlier because rifampicin shortens DTG's half-life), and Low (every scenario once the regimen has fully cleared, day 5 onward for TLD, day 7 onward for TLE). The full per-scenario table is in the Stage 5 commit message and the final report.
 
 ---
 
