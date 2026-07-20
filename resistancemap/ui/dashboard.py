@@ -1,878 +1,28 @@
-# ============================================================
-# ResistanceMap ZA OS | CDSS Frontend v5.0
-# Research prototype — not an approved medical device
-# ============================================================
+"""Patient Assessment Dashboard — the core clinical page.
 
-import streamlit as st
+Pharmacokinetic decay, regimen-state classification, mutation risk index,
+composite score, clinical directives, clinical-risk/support-needs split, and
+the audit trail. All clinical computation is delegated to resistancemap.engine
+(pk, selection, risk) and resistancemap.audit.log; this module is UI glue.
+"""
+
+import datetime
+import html
 import math
+
 import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
 from plotly.subplots import make_subplots
-import datetime
-import hashlib
-import html
-import json
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
-import yaml
+from resistancemap import config
+from resistancemap.audit import log as auditlog
+from resistancemap.engine import pk
+from resistancemap.engine import risk
+from resistancemap.engine import selection as sel
 
-# Make the app directory importable so the pure engine package resolves under
-# both `streamlit run` and pytest/AppTest.
-import sys
-_APP_DIR = Path(__file__).resolve().parent
-if str(_APP_DIR) not in sys.path:
-    sys.path.insert(0, str(_APP_DIR))
-from engine import pk
-from engine import selection as sel
 
-# ============================================================
-# DATA BUNDLE LOADING (versioned rules, methodology section 13.2)
-# ============================================================
-APP_VERSION = "5.0"
-DATA_DIR = _APP_DIR / "data"
-SAST = ZoneInfo("Africa/Johannesburg")
-
-
-@st.cache_data
-def load_yaml(filename):
-    """Load a versioned data file from the data directory."""
-    with open(DATA_DIR / filename, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def file_sha256(filename):
-    """SHA-256 of a data file, used for the ruleset fingerprint and audit rows."""
-    return hashlib.sha256((DATA_DIR / filename).read_bytes()).hexdigest()
-
-
-EXPECTED_SCHEMA_VERSION = "1.0"
-DATA_FILES = ["drugs.yaml", "interactions.yaml", "rules.yaml"]
-
-# Numeric mappings that, when present as a {value: ...} dict, must carry a source.
-_SOURCED_FIELDS = (
-    "plasma_t_half_h", "c_max_ss_mg_L", "threshold_mg_L",
-    "secondary_threshold_mg_L", "intracellular_t_half_h", "activity_fraction_cutoff",
-)
-
-
-def _load_all():
-    """Load and hash every data file. Returns (data, hashes, error)."""
-    data, hashes = {}, {}
-    for fn in DATA_FILES:
-        try:
-            data[fn] = load_yaml(fn)
-            hashes[fn] = file_sha256(fn)
-        except FileNotFoundError:
-            return None, None, f"{fn}: file not found in {DATA_DIR}."
-        except yaml.YAMLError as exc:
-            return None, None, f"{fn}: YAML parse error: {exc}"
-    return data, hashes, None
-
-
-def _validate_data(data):
-    """Fail loudly on a malformed data bundle rather than mis-dosing silently."""
-    for fn in DATA_FILES:
-        sv = data[fn].get("schema_version")
-        if sv != EXPECTED_SCHEMA_VERSION:
-            return f"{fn}: schema_version {sv!r} != expected {EXPECTED_SCHEMA_VERSION!r}."
-
-    drugs = data["drugs.yaml"].get("drugs")
-    if not isinstance(drugs, list) or not drugs:
-        return "drugs.yaml: 'drugs' list is missing or empty."
-    for d in drugs:
-        nm = d.get("name", "?")
-        for req in ("tier", "curve_available", "genetic_barrier", "signature_mutation"):
-            if req not in d:
-                return f"drugs.yaml: drug {nm} is missing '{req}'."
-        tier = d["tier"]
-        if tier == "A":
-            if not isinstance(d.get("threshold_mg_L"), dict):
-                return f"drugs.yaml: tier A drug {nm} is missing threshold_mg_L."
-            if not isinstance(d.get("c_max_ss_mg_L"), dict):
-                return f"drugs.yaml: tier A drug {nm} is missing c_max_ss_mg_L."
-        elif tier == "B":
-            if d.get("threshold_mg_L") is not None:
-                return (f"drugs.yaml: tier B drug {nm} carries threshold_mg_L, "
-                        "violating the section 3.4 separation.")
-            if d.get("curve_available"):
-                if not isinstance(d.get("intracellular_t_half_h"), dict):
-                    return f"drugs.yaml: tier B drug {nm} is missing intracellular_t_half_h."
-                if not isinstance(d.get("activity_fraction_cutoff"), dict):
-                    return f"drugs.yaml: tier B drug {nm} is missing activity_fraction_cutoff."
-        else:
-            return f"drugs.yaml: drug {nm} has unknown tier {tier!r}."
-        for key in _SOURCED_FIELDS:
-            v = d.get(key)
-            if isinstance(v, dict) and "value" in v and not v.get("source"):
-                return f"drugs.yaml: {nm}.{key} is missing its 'source' key."
-
-    ped = data["rules.yaml"].get("paediatric_dtg_dosing")
-    if not isinstance(ped, dict):
-        return "rules.yaml: 'paediatric_dtg_dosing' section is missing or malformed."
-    bands = ped.get("bands")
-    if not isinstance(bands, list) or not bands:
-        return "rules.yaml: 'paediatric_dtg_dosing.bands' is missing or empty."
-    for i, band in enumerate(bands):
-        if "min_kg" not in band or "max_kg" not in band:
-            return f"rules.yaml: band {i} is missing min_kg/max_kg."
-        if not band.get("doses"):
-            return f"rules.yaml: band {i} ({band.get('label', '?')}) has no doses."
-
-    if not data["rules.yaml"].get("regimens"):
-        return "rules.yaml: 'regimens' is missing or empty."
-    if not isinstance(data["interactions.yaml"].get("interactions"), list) \
-            or not data["interactions.yaml"]["interactions"]:
-        return "interactions.yaml: 'interactions' is missing or empty."
-    return None
-
-
-DATA, DATA_HASHES, _load_error = _load_all()
-if _load_error:
-    st.error(_load_error)
-    st.stop()
-
-_data_error = _validate_data(DATA)
-if _data_error:
-    st.error(_data_error)
-    st.stop()
-
-DRUGS = DATA["drugs.yaml"]["drugs"]
-RULES = DATA["rules.yaml"]
-INTERACTIONS = {x["id"]: x for x in DATA["interactions.yaml"]["interactions"]}
-REGIMENS = {r["display"]: r["components"] for r in RULES["regimens"]}
-COMPOSITE = RULES["composite_score"]
-VL_BANDS = RULES["viral_load_bands"]
-CD4_BANDS = RULES["cd4_bands"]
-
-RULESET_VERSION = RULES.get("ruleset_version", "unknown")
-DRUGS_HASH = DATA_HASHES["drugs.yaml"]
-INTER_HASH = DATA_HASHES["interactions.yaml"]
-RULES_HASH = DATA_HASHES["rules.yaml"]
-RULESET_FINGERPRINT = (
-    f"ruleset v{RULESET_VERSION} · drugs {DRUGS_HASH[:8]} · "
-    f"interactions {INTER_HASH[:8]} · rules {RULES_HASH[:8]}"
-)
-
-
-def _internal_drug(d):
-    """Map a drugs.yaml entry to the internal shape the engine/UI consume.
-
-    Tier B drugs deliberately receive no threshold_mg_L (methodology section 3.4),
-    so downstream code that keys on threshold presence skips them.
-    """
-    entry = {
-        "name": d["name"],
-        "abbreviation": d.get("abbreviation"),
-        "tier": d["tier"],
-        "curve_available": bool(d.get("curve_available")),
-        "is_prodrug": bool(d.get("is_prodrug")),
-        "active_moiety": d.get("active_moiety"),
-        "class": d.get("drug_class"),
-        "mutation": d.get("signature_mutation"),
-        "cross_resistance": d.get("cross_resistance", []),
-        "genetic_barrier": d.get("genetic_barrier"),
-        "renal_sensitive": bool(d.get("renally_cleared")),
-        "color": d.get("colour"),
-        "lloq": d.get("lloq_mg_L"),
-    }
-    if isinstance(d.get("plasma_t_half_h"), dict):
-        entry["t_half"] = d["plasma_t_half_h"]["value"]
-    if isinstance(d.get("c_max_ss_mg_L"), dict):
-        entry["c_max"] = d["c_max_ss_mg_L"]["value"]
-    if isinstance(d.get("threshold_mg_L"), dict):
-        entry["threshold_mg_L"] = d["threshold_mg_L"]["value"]
-    if isinstance(d.get("secondary_threshold_mg_L"), dict):
-        entry["secondary_threshold"] = d["secondary_threshold_mg_L"]["value"]
-        entry["secondary_label"] = d["secondary_threshold_mg_L"].get("label", "secondary")
-    if isinstance(d.get("intracellular_t_half_h"), dict):
-        entry["intracellular_t_half"] = d["intracellular_t_half_h"]["value"]
-        entry["intracellular_compartment"] = d["intracellular_t_half_h"].get("compartment")
-    if isinstance(d.get("activity_fraction_cutoff"), dict):
-        entry["activity_fraction_cutoff"] = d["activity_fraction_cutoff"]["value"]
-    return entry
-
-
-PK_DB = {d["name"]: _internal_drug(d) for d in DRUGS}
-
-
-def chain_entry(prev_hash, entry):
-    """Return the SHA-256 chain hash of an audit entry (methodology section 13.2).
-
-    entry_hash = SHA-256(prev_hash + canonical_json(entry)). Altering any row
-    invalidates every subsequent hash. This gives tamper evidence, not tamper
-    proofing: an actor with write access can rebuild the whole chain.
-    """
-    payload = json.dumps(entry, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256((prev_hash + payload).encode("utf-8")).hexdigest()
-
-
-GENESIS_HASH = "0" * 64
-
-
-def paediatric_dtg_band(weight_kg, age_months=None):
-    """Resolve the WHO dolutegravir dose for a weight and age (methodology section 6).
-
-    Returns (result, config). result is a dict with:
-      status: one of "ok", "weight_below_bands", "age_below_coverage",
-              "age_required", "age_outside_coverage"
-      band:   the matched weight band dict (or None), carrying true boundaries
-      dose:   the matched dose dict (or None)
-
-    The 6 to <10 kg band is age-dependent (IMPAACT P1093): 10 mg from four weeks
-    to under six months, 15 mg from six months. Other bands are age-independent.
-    """
-    cfg = RULES["paediatric_dtg_dosing"]
-    min_age = cfg.get("minimum_age_months", 1)
-
-    band = None
-    for b in cfg["bands"]:
-        lo, hi = b["min_kg"], b["max_kg"]
-        if weight_kg >= lo and (hi is None or weight_kg < hi):
-            band = b
-            break
-    if band is None:
-        return {"status": "weight_below_bands", "band": None, "dose": None}, cfg
-
-    doses = band["doses"]
-    age_dependent = any(
-        "min_age_months" in d or "max_age_months" in d for d in doses
-    )
-
-    # Below the source table's youngest age, show no dose regardless of band.
-    if age_months is not None and age_months < min_age:
-        return {"status": "age_below_coverage", "band": band, "dose": None}, cfg
-
-    if not age_dependent:
-        return {"status": "ok", "band": band, "dose": doses[0]}, cfg
-
-    if age_months is None:
-        return {"status": "age_required", "band": band, "dose": None}, cfg
-
-    for d in doses:
-        lo = d.get("min_age_months", 0)
-        hi = d.get("max_age_months")
-        if age_months >= lo and (hi is None or age_months < hi):
-            return {"status": "ok", "band": band, "dose": d}, cfg
-    return {"status": "age_outside_coverage", "band": band, "dose": None}, cfg
-
-# ============================================================
-# 1. ENTERPRISE PAGE CONFIGURATION & GLOBAL STYLING
-# ============================================================
-
-st.set_page_config(
-    page_title="ResistanceMap ZA OS | Enterprise CDSS",
-    layout="wide",
-    page_icon=":material/biotech:",
-    initial_sidebar_state="expanded"
-)
-
-# ── Enterprise CSS Theme ─────────────────────────────────────
-st.markdown("""
-<style>
-/* ── Global Font & Background ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-    background-color: #0a0e1a;
-    color: #e2e8f0;
-}
-
-/* ── Main Container ── */
-.main .block-container {
-    padding: 1.5rem 2rem;
-    background-color: #0a0e1a;
-}
-
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0d1117 0%, #111827 100%);
-    border-right: 1px solid #1e3a5f;
-}
-
-section[data-testid="stSidebar"] .block-container {
-    padding: 1rem;
-}
-
-/* ── Metric Cards ── */
-.metric-card {
-    background: linear-gradient(135deg, #0d1b2e 0%, #112240 100%);
-    border: 1px solid #1e3a5f;
-    border-radius: 12px;
-    padding: 1.2rem 1.4rem;
-    margin-bottom: 0.8rem;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-}
-
-.metric-card:hover {
-    border-color: #2563eb;
-    box-shadow: 0 4px 25px rgba(37,99,235,0.2);
-    transform: translateY(-2px);
-}
-
-.metric-card h3 {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 0.4rem;
-}
-
-.metric-card .metric-value {
-    font-size: 2rem;
-    font-weight: 700;
-    line-height: 1;
-}
-
-.metric-card .metric-delta {
-    font-size: 0.75rem;
-    margin-top: 0.3rem;
-}
-
-/* ── Alert Banners ── */
-.alert-critical {
-    background: linear-gradient(135deg, #1a0000, #2d0000);
-    border-left: 4px solid #ef4444;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 0.5rem 0;
-    color: #fca5a5;
-}
-
-.alert-warning {
-    background: linear-gradient(135deg, #1a1200, #2d2000);
-    border-left: 4px solid #f59e0b;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 0.5rem 0;
-    color: #fde68a;
-}
-
-.alert-info {
-    background: linear-gradient(135deg, #001a2d, #002040);
-    border-left: 4px solid #3b82f6;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 0.5rem 0;
-    color: #93c5fd;
-}
-
-.alert-success {
-    background: linear-gradient(135deg, #001a0d, #002d1a);
-    border-left: 4px solid #10b981;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 0.5rem 0;
-    color: #6ee7b7;
-}
-
-/* ── Section Headers ── */
-.section-header {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: #3b82f6;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    margin: 1.5rem 0 0.8rem 0;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid #1e3a5f;
-}
-
-/* ── Drug Badges ── */
-.drug-badge {
-    display: inline-block;
-    background: #1e3a5f;
-    color: #93c5fd;
-    border: 1px solid #2563eb;
-    border-radius: 20px;
-    padding: 0.2rem 0.8rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin: 0.15rem;
-    letter-spacing: 0.05em;
-}
-
-/* ── Risk Gauge Container ── */
-.risk-gauge-container {
-    background: linear-gradient(135deg, #0d1b2e, #112240);
-    border: 1px solid #1e3a5f;
-    border-radius: 12px;
-    padding: 1rem;
-    text-align: center;
-}
-
-/* ── Status Pills ── */
-.status-stable {
-    background: #064e3b;
-    color: #6ee7b7;
-    border: 1px solid #10b981;
-    border-radius: 20px;
-    padding: 0.2rem 0.8rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-}
-
-.status-warning {
-    background: #451a03;
-    color: #fde68a;
-    border: 1px solid #f59e0b;
-    border-radius: 20px;
-    padding: 0.2rem 0.8rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-}
-
-.status-critical {
-    background: #450a0a;
-    color: #fca5a5;
-    border: 1px solid #ef4444;
-    border-radius: 20px;
-    padding: 0.2rem 0.8rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-}
-
-/* ── Tab Styling ── */
-.stTabs [data-baseweb="tab-list"] {
-    background: #0d1117;
-    border-bottom: 1px solid #1e3a5f;
-    gap: 0;
-}
-
-.stTabs [data-baseweb="tab"] {
-    background: transparent;
-    color: #64748b;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 0.6rem 1.2rem;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
-
-.stTabs [aria-selected="true"] {
-    background: transparent !important;
-    color: #3b82f6 !important;
-    border-bottom: 2px solid #3b82f6 !important;
-}
-
-/* ── Sidebar Text ── */
-.sidebar-label {
-    font-size: 0.7rem;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    font-weight: 600;
-    margin-bottom: 0.2rem;
-}
-
-/* ── Streamlit Overrides ── */
-.stSelectbox > div > div {
-    background: #0d1b2e !important;
-    border: 1px solid #1e3a5f !important;
-    color: #e2e8f0 !important;
-}
-
-.stSlider > div > div > div {
-    background: #1e3a5f !important;
-}
-
-div[data-testid="stMetricValue"] {
-    color: #e2e8f0;
-}
-
-h1, h2, h3, h4 {
-    color: #e2e8f0 !important;
-}
-
-/* ── Data Table ── */
-.styled-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82rem;
-    background: #0d1b2e;
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid #1e3a5f;
-}
-
-.styled-table th {
-    background: #112240;
-    color: #93c5fd;
-    padding: 0.7rem 1rem;
-    text-align: left;
-    font-weight: 600;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    border-bottom: 1px solid #1e3a5f;
-}
-
-.styled-table td {
-    padding: 0.65rem 1rem;
-    color: #cbd5e1;
-    border-bottom: 1px solid #0f2237;
-}
-
-.styled-table tr:hover td {
-    background: #112240;
-}
-
-/* ── Blink Animation for Critical ── */
-@keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
-
-.blink-red {
-    animation: blink 1.5s infinite;
-    color: #ef4444;
-}
-
-/* ── Logo / Header Bar ── */
-.top-header {
-    background: linear-gradient(90deg, #0d1117 0%, #0a1628 50%, #0d1117 100%);
-    border: 1px solid #1e3a5f;
-    border-radius: 12px;
-    padding: 1rem 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1.5rem;
-}
-
-/* ── Progress Bar Override ── */
-.stProgress > div > div > div {
-    background: linear-gradient(90deg, #1d4ed8, #2563eb) !important;
-}
-
-/* ── Checkbox & Radio ── */
-.stCheckbox > label {
-    color: #94a3b8 !important;
-    font-size: 0.85rem !important;
-}
-
-.stRadio > label {
-    color: #94a3b8 !important;
-    font-size: 0.85rem !important;
-}
-
-/* ── Divider ── */
-hr {
-    border-color: #1e3a5f !important;
-}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #0a0e1a; }
-::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #2563eb; }
-
-/* Input text */
-.stTextInput > div > div > input {
-    background: #0d1b2e !important;
-    border: 1px solid #1e3a5f !important;
-    color: #e2e8f0 !important;
-    border-radius: 6px !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================
-# 2. MASTER MENU NAVIGATION CONTROL
-# ============================================================
-
-st.sidebar.markdown("<p class='sidebar-label'>System View Mode</p>", unsafe_allow_html=True)
-app_view = st.sidebar.radio(
-    "Select Interface Page:",
-    ["About ResistanceMap ZA", "Understanding Your Results", "Patient Assessment Dashboard"]
-)
-st.sidebar.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
-
-# ------------------------------------------------------------
-# VIEW MODE A: ABOUT / MAIN FRONT PAGE
-# ------------------------------------------------------------
-if app_view == "About ResistanceMap ZA":
-    st.markdown("""
-    <div style='background: linear-gradient(135deg, #0d1b2e 0%, #0d2542 100%); 
-                border: 1px solid #1e3a5f; border-radius: 12px; padding: 2rem; margin-bottom: 2rem;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.4); text-align: center;'>
-        <h1 style='font-size: 2.5rem; font-weight: 700; color: #e2e8f0; margin: 0;'>ResistanceMap ZA</h1>
-        <p style='font-size: 1.1rem; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 0.5rem;'>
-            Molecular Epidemiology & Pharmacokinetic Surveillance Engine
-        </p>
-        <p style='font-size: 0.95rem; color: #94a3b8; max-width: 800px; margin: 1rem auto 0 auto; line-height: 1.6;'>
-            An open-source, zero-cost computational framework mapping HIV-1 drug-resistance mutation clusters across KwaZulu-Natal to safeguard public treatment programmes.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("""
-        <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>What is ResistanceMap ZA?</h3>
-            <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
-                It is an advanced Clinical Decision Support System (CDSS) that tracks how HIV mutations cluster in different communities. When patients miss treatment erratically, sub-inhibitory windows select for drug-resistant variants. This platform models those drops to flag resistance patterns before they spread.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown("""
-        <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>Why is it useful?</h3>
-            <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
-                With South Africa deploying the National Health Insurance (NHI) framework, therapeutic failure creates major fiscal challenges. Moving patients onto specialized third-line therapies escalates costs drastically. By predicting resistance hotspots, resource distribution can be optimized accurately.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown("""
-        <div class='metric-card' style='height: 100%;'>
-            <h3 style='color: #3b82f6; font-size: 0.9rem;'>Who is it for?</h3>
-            <p style='font-size: 0.85rem; color: #cbd5e1; line-height: 1.6; margin-top: 0.5rem;'>
-                Built for frontline clinical professionals, health system programme planners, and medical researchers. It bridges the gap between raw genomic sequence data (NCBI GenBank / Stanford HIVdb) and concrete local diagnostic support protocols.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br><p class='section-header'>System Instruction Manual</p>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style='background: #0d1b2e; border: 1px solid #1e3a5f; border-radius: 8px; padding: 1.2rem 1.5rem; font-size: 0.88rem; line-height: 1.7; color: #cbd5e1;'>
-        <strong>How to Navigate the Application Engine:</strong><br>
-        1. Locate the <strong>System View Mode</strong> radio filter in the left sidebar menu.<br>
-        2. Toggle the option to <strong>Patient Assessment Dashboard</strong> to initialise the live assessment engine.<br>
-        3. Alter regional comorbidity profiles, adherence windows, and pediatric weight arrays to see real-time updates.<br>
-        4. Review the cross-resistance cascade models and compliance metrics natively generated within individual tabs.
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Plain English Footer ──
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(f"""
-    <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
-                font-size:0.65rem; color: #475569; line-height:2;'>
-        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Open Source Public Health System Framework<br>
-        Contact: sbagaria2009@gmail.com<br>
-        Prototype for educational and research use only. Not an approved medical device.
-    </div>
-    """, unsafe_allow_html=True)
-
-# ------------------------------------------------------------
-# VIEW MODE B: UNDERSTANDING YOUR RESULTS (PATIENT GUIDE)
-# ------------------------------------------------------------
-elif app_view == "Understanding Your Results":
-
-    st.markdown("""
-    <div style='background: linear-gradient(135deg, #0d1b2e 0%, #0d2542 100%);
-                border: 1px solid #1e3a5f; border-radius: 12px; padding: 2rem; margin-bottom: 2rem;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.4); text-align: center;'>
-        <h1 style='font-size: 2.2rem; font-weight: 700; color: #e2e8f0; margin: 0;'>
-           Understanding Your Results
-        </h1>
-        <p style='font-size: 1rem; color: #10b981; margin-top: 0.5rem; font-weight: 500;'>
-            A plain-language guide written for patients living with HIV
-        </p>
-        <p style='font-size: 0.88rem; color: #94a3b8; max-width: 700px; margin: 0.8rem auto 0 auto; line-height: 1.7;'>
-            This page explains every part of ResistanceMap ZA in simple, everyday language.
-            No medical degree needed — just honest information to help you understand your treatment better.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Section 1: What is this tool? ──
-    st.markdown("<p class='section-header'>What is ResistanceMap ZA?</p>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class='metric-card'>
-        <p style='font-size: 0.92rem; color: #cbd5e1; line-height: 1.85;'>
-            <strong style='color:#3b82f6;'>In simple terms:</strong> ResistanceMap ZA is a free computer tool that helps
-            doctors check whether your HIV medication is still working properly.<br><br>
-            When you take your ARV pills every day, they keep the virus under control. But if doses are missed,
-            the virus can start changing (we call these changes <strong>"mutations"</strong>). Once the virus changes,
-            your current pills might stop working as well.<br><br>
-            This tool helps your doctor spot those problems <strong>before</strong> they become serious — so they
-            can adjust your treatment early and keep you healthy.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Section 2: The Dashboard Numbers ──
-    st.markdown("<p class='section-header'>What Do the Numbers on the Dashboard Mean?</p>", unsafe_allow_html=True)
-
-    guide_items = [
-        ("Resistance Risk Score (0–100)",
-         "This is like a warning light for your treatment.",
-         "It combines how long since your last dose, how much medicine is left in your blood, and other health factors. "
-         "<strong>Lower is better.</strong> A score under 40 means things look stable. Above 70 means your doctor needs to act quickly.",
-         "The system adds points for each risk factor — missed days, low drug levels, TB treatment, kidney problems, etc. "
-         "The more risk factors, the higher the score."),
-
-        ("Drugs Below MIC",
-         "MIC stands for 'Minimum Inhibitory Concentration' — the lowest amount of medicine needed to stop the virus.",
-         "If a drug drops <strong>below MIC</strong>, there is not enough medicine in your blood to fight HIV properly. "
-         "This is when the virus can start changing and becoming resistant. "
-         "<strong>0 drugs below MIC = good. Any number above 0 = your doctor should look at this.</strong>",
-         "Your blood drug level is compared to the known minimum needed. If you've missed doses, drugs with short half-lives (like Lamivudine) drop below MIC first."),
-
-        ("Days Defaulted",
-         "This is simply how many days since you last took your medication.",
-         "<strong>0 days = you took your pills today.</strong> Every extra day without pills means the medicine in your blood is dropping. "
-         "After a few days, some drugs will have completely left your system.",
-         "Your doctor or pharmacy records show when you last collected your pills. The system uses this to calculate how much drug is left in your body."),
-
-        ("Viral Load",
-         "This blood test counts how much HIV is in your blood.",
-         "<strong>Undetectable (below 50 copies/mL) = excellent.</strong> It means your treatment is working well. "
-         "Above 1,000 copies/mL means the virus may be growing because the treatment is struggling. "
-         "Your doctor may need to check for resistance.",
-         "Viral load is measured from a blood sample sent to the NHLS laboratory. Results are reported in copies per millilitre of blood."),
-
-        ("CD4 Count",
-         "CD4 cells are the soldiers of your immune system that fight infections.",
-         "<strong>Above 500 = healthy immune system.</strong> Between 200–350 = your immune system needs support. "
-         "<strong>Below 200 = your immune system is very weak</strong> and you're at risk for serious infections like TB or pneumonia.",
-         "CD4 is measured from a blood sample. A rising CD4 count over time means your ARVs are working and your body is recovering."),
-    ]
-
-    for title, subtitle, explanation, calculation in guide_items:
-        st.markdown(f"""
-        <div class='metric-card' style='margin-bottom: 1rem;'>
-            <h3 style='color: #3b82f6; font-size: 1rem; margin-bottom: 0.3rem;'>{title}</h3>
-            <p style='font-size: 0.82rem; color: #f59e0b; font-weight: 500; margin-bottom: 0.6rem;'>{subtitle}</p>
-            <p style='font-size: 0.88rem; color: #cbd5e1; line-height: 1.8; margin-bottom: 0.8rem;'>{explanation}</p>
-            <div style='background: #0a1628; border-radius: 8px; padding: 0.7rem 1rem; border-left: 3px solid #3b82f6;'>
-                <div style='font-size: 0.65rem; color: #3b82f6; font-weight: 700; text-transform: uppercase;
-                            letter-spacing: 0.1em; margin-bottom: 0.3rem;'>How it's calculated</div>
-                <p style='font-size: 0.78rem; color: #94a3b8; line-height: 1.6; margin: 0;'>{calculation}</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Section 3: The Tabs ──
-    st.markdown("<p class='section-header'>What Are the Different Tabs?</p>", unsafe_allow_html=True)
-
-    tabs_guide = [
-        ("PK Decay Curves",
-         "Shows how fast each medicine leaves your body after a missed dose",
-         "Think of it like a fuel gauge for each of your ARV drugs. The coloured lines show each drug's level dropping over time. "
-         "When a line crosses below the dotted line (MIC), that drug is no longer protecting you. "
-         "Drugs with a long 'half-life' (like Efavirenz) stay in your body longer, but this can actually be dangerous — "
-         "the virus can start to 'learn' to fight a low dose of the drug."),
-
-        ("Mutation & Resistance",
-         "Shows which genetic changes might happen if drug levels drop too low",
-         "HIV makes copies of itself very quickly, and sometimes those copies have small mistakes called mutations. "
-         "Some mutations make the virus resistant to your medicine. For example, <strong>M184V</strong> makes Lamivudine less effective, "
-         "and <strong>K65R</strong> does the same to Tenofovir. This tab shows how likely these mutations are based on your current drug levels."),
-
-        ("Clinical Directives",
-         "Alerts and instructions for your healthcare team",
-         "If you're also being treated for <strong>TB</strong>, the system warns your doctor to double the Dolutegravir dose. "
-         "If you use <strong>traditional medicines</strong> like African Potato or St. John's Wort, it warns that these can speed up "
-         "how fast your ARVs leave your body. These alerts help your clinic team make the right adjustments."),
-
-        ("Adherence Risk",
-         "Predicts how likely a patient is to miss future doses",
-         "This looks at real-life challenges: <strong>How far do you live from the clinic? Do you have transport? "
-         "Is there a taxi strike?</strong> It combines these into a risk score. If your risk is high, the system suggests "
-         "a community health worker visit or an extra phone reminder to help you stay on track."),
-
-        ("Audit & Compliance",
-         "A complete record of every check the system performs",
-         "Every time a doctor uses ResistanceMap ZA, the system creates a <strong>tamper-evident</strong> record — "
-         "if any earlier entry is changed, the records that follow it no longer match, so tampering shows up. "
-         "This is not the same as tamper-proof: someone with permission to write to the records could rebuild them, "
-         "so the record makes changes <em>detectable</em> rather than impossible. It helps make sure every alert was seen "
-         "and every guideline was followed."),
-    ]
-
-    for tab_name, tab_summary, tab_detail in tabs_guide:
-        st.markdown(f"""
-        <div class='metric-card' style='margin-bottom: 0.8rem;'>
-            <div style='display: flex; align-items: flex-start; gap: 1rem;'>
-                <div style='flex: 1;'>
-                    <h3 style='color: #e2e8f0; font-size: 0.95rem; margin-bottom: 0.2rem;'>{tab_name}</h3>
-                    <p style='font-size: 0.8rem; color: #10b981; font-weight: 500; margin-bottom: 0.5rem;'>{tab_summary}</p>
-                    <p style='font-size: 0.85rem; color: #94a3b8; line-height: 1.75;'>{tab_detail}</p>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Section 4: Key Medical Terms ──
-    st.markdown("<p class='section-header'>Key Words Explained</p>", unsafe_allow_html=True)
-
-    glossary = [
-        ("ARV / ART", "Antiretroviral drugs — the daily pills that keep HIV under control."),
-        ("Mutation", "A change in the virus's genetic code. Some mutations make the virus resistant to certain drugs."),
-        ("MIC", "Minimum Inhibitory Concentration — the smallest amount of drug needed in your blood to stop the virus from growing."),
-        ("Half-life", "How long it takes for half of a drug to leave your body. A long half-life means the drug stays longer."),
-        ("Viral Load", "A blood test that measures how much HIV is in your body. Lower is better. 'Undetectable' is the goal."),
-        ("CD4 Count", "A count of the immune cells that HIV attacks. Higher numbers mean a stronger immune system."),
-        ("Resistance", "When the virus changes so that a drug can no longer stop it from growing."),
-        ("Sub-inhibitory", "When drug levels are too low to stop the virus but still high enough to push it to mutate. This is the most dangerous zone."),
-        ("First-line / Second-line / Third-line", "Treatment levels. First-line is the starting treatment. If it fails, you move to second-line (more expensive), then third-line (very expensive and limited options)."),
-        ("TLD", "Tenofovir + Lamivudine + Dolutegravir — the most common first-line ARV combination in South Africa."),
-        ("NDoH", "National Department of Health — the government body that sets treatment guidelines in South Africa."),
-        ("POPIA", "Protection of Personal Information Act — a South African law that protects your private medical data."),
-    ]
-
-    glossary_rows = ""
-    for term, definition in glossary:
-        glossary_rows += f"""
-        <tr>
-            <td style='color: #3b82f6; font-weight: 600; white-space: nowrap; vertical-align: top;'>{term}</td>
-            <td style='color: #cbd5e1; line-height: 1.7;'>{definition}</td>
-        </tr>"""
-
-    st.markdown(f"""
-    <table class='styled-table'>
-        <thead><tr><th>Term</th><th>What It Means</th></tr></thead>
-        <tbody>{glossary_rows}</tbody>
-    </table>
-    """, unsafe_allow_html=True)
-
-    # ── Section 5: Important Reminders ──
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class='alert-success'>
-        <div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem;'>
-           Important Reminders for Patients
-        </div>
-        <div style='font-size: 0.88rem; line-height: 1.9;'>
-           <strong>Take your ARVs every day at the same time.</strong> This is the single most important thing you can do.<br>
-           <strong>Don't stop your medication</strong> even if you feel healthy — the virus is still there.<br>
-           <strong>Tell your doctor</strong> about any traditional medicines, supplements, or herbal remedies you use.<br>
-           <strong>Go to every clinic appointment</strong> and collect your pills on time.<br>
-           <strong>If you missed doses</strong>, don't panic — restart your full regimen and tell your healthcare worker.<br>
-           <strong>Ask questions.</strong> You have the right to understand your treatment. This tool is here to help.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Footer ──
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown(f"""
-    <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
-                font-size:0.65rem; color: #475569; line-height:2;'>
-        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Patient Education Module<br>
-        Written in plain language for patients living with HIV in KwaZulu-Natal<br>
-        This tool does not replace your doctor. Always follow your healthcare team's advice.
-    </div>
-    """, unsafe_allow_html=True)
-
-# ------------------------------------------------------------
-# VIEW MODE C: PATIENT ASSESSMENT DASHBOARD
-# ------------------------------------------------------------
-elif app_view == "Patient Assessment Dashboard":
+def render():
 
     # ============================================================
     # SIDEBAR — ENTERPRISE PATIENT PROFILE
@@ -887,7 +37,7 @@ elif app_view == "Patient Assessment Dashboard":
             </div>
             <div style='font-size:0.65rem; color:#3b82f6; text-transform:uppercase;
                         letter-spacing:0.15em; margin-top:0.2rem;'>
-                CDSS v{APP_VERSION}
+                CDSS v{config.APP_VERSION}
             </div>
             <div style='font-size:0.6rem; color:#475569; margin-top:0.3rem;'>
                 Educational Prototype
@@ -898,7 +48,7 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
 
         # ── System Status ──
-        now = datetime.datetime.now(SAST)
+        now = datetime.datetime.now(config.SAST)
         st.markdown(f"""
         <div style='background:#0a1628; border:1px solid #1e3a5f; border-radius:8px;
                     padding:0.6rem 0.8rem; margin-bottom:0.8rem; font-size:0.72rem;'>
@@ -934,7 +84,7 @@ elif app_view == "Patient Assessment Dashboard":
 
         st.markdown("<p class='section-header'>ART Regimen</p>", unsafe_allow_html=True)
 
-        regimen = st.selectbox("Current Regimen", list(REGIMENS.keys()))
+        regimen = st.selectbox("Current Regimen", list(config.REGIMENS.keys()))
 
         st.markdown("<p class='section-header'>Clinical Modifiers</p>", unsafe_allow_html=True)
 
@@ -993,8 +143,8 @@ elif app_view == "Patient Assessment Dashboard":
     # ============================================================
 
     # ── PK database and regimen mapping (loaded from YAML at startup) ──
-    pk_db = PK_DB
-    regimen_drugs = REGIMENS
+    pk_db = config.PK_DB
+    regimen_drugs = config.REGIMENS
 
     active_drugs = regimen_drugs.get(regimen, ["Tenofovir", "Lamivudine", "Dolutegravir"])
 
@@ -1009,7 +159,7 @@ elif app_view == "Patient Assessment Dashboard":
         # Rifampicin + DTG only: derived 0.46 multiplier, UGT1A1 principal (§5.1).
         # The EFV interaction was removed in Stage 3 (§5.2), so no EFV branch.
         if tb_coinfection and drug == "Dolutegravir":
-            ix = INTERACTIONS["rifampicin_dtg"]
+            ix = config.INTERACTIONS["rifampicin_dtg"]
             t_half *= ix["multiplier"]
             applied.append((ix["display_name"], ix["display_desc"]))
 
@@ -1024,7 +174,7 @@ elif app_view == "Patient Assessment Dashboard":
         # Below curve_min_age_months the curve is suppressed upstream, so this
         # branch only runs for ages the allometric model covers.
         if paediatric:
-            pw = INTERACTIONS["paediatric_weight"]
+            pw = config.INTERACTIONS["paediatric_weight"]
             weight_factor = pk.allometric_half_life_factor(
                 weight_kg, pw["reference_weight_kg"], pw["exponent"])
             t_half *= weight_factor
@@ -1040,7 +190,7 @@ elif app_view == "Patient Assessment Dashboard":
 
     # Below curve_min_age_months the allometric model is not applicable (UGT1A1
     # maturation, §5.6): suppress the whole decay model, not just the dose.
-    curve_min_age = INTERACTIONS["paediatric_weight"].get("curve_min_age_months", 6)
+    curve_min_age = config.INTERACTIONS["paediatric_weight"].get("curve_min_age_months", 6)
     curve_suppressed = bool(paediatric and age_months is not None and age_months < curve_min_age)
 
     if not curve_suppressed:
@@ -1111,36 +261,23 @@ elif app_view == "Patient Assessment Dashboard":
             mutation_rows.append({"name": drug, "label": label, "exposure": exp,
                                   "barrier": barrier, "numeric": numeric})
 
-        if has_indeterminate or current_state == sel.INDETERMINATE:
-            composite_label = "Indeterminate"
-        else:
-            vl_band = (2 if viral_load > VL_BANDS["high_above"]
-                       else 1 if viral_load > VL_BANDS["undetectable_below"] else 0)
-            cd4_band = (2 if cd4_count < CD4_BANDS["severe_below"]
-                        else 1 if cd4_count < CD4_BANDS["low_below"] else 0)
-            # state_sev uses the CURRENT state, not the worst state ever reached.
-            # The mutation index already carries the cumulative "did this ever
-            # happen" signal (§9.2: exposure level 2 = sole active agent at any
-            # point), so state here can reflect live risk. Using worst-ever state
-            # for severity pins the score at its peak forever once any monotherapy
-            # hour has occurred, which is what made Stage 4's composite saturate
-            # by day 3-5 and made every later day indistinguishable (methodology
-            # §10.2, Stage 5 recalibration).
-            state_sev = sel.STATE_SEVERITY.get(current_state, 0)
-            max_mut = max((r["numeric"] for r in mutation_rows if r["numeric"] is not None),
-                          default=0)
-            w = COMPOSITE["weights"]
-            composite_raw = (w["state"] * state_sev + w["mutation"] * max_mut
-                             + w["viral_load"] * vl_band + w["immune"] * cd4_band)
-            band = COMPOSITE["bands"][0]
-            for b in COMPOSITE["bands"]:
-                if composite_raw >= b["min"]:
-                    band = b
-            composite_label = band["label"]
-            composite_colour = band["colour"]
+        # Composite computed via engine.risk (methodology 10.2, Stage 5 recalibration),
+        # the same pure module tests/test_risk.py exercises directly - app and tests
+        # share one implementation. state_sev uses the CURRENT state, not the worst
+        # state ever reached: the mutation index already carries the cumulative "did
+        # this ever happen" signal (§9.2: exposure level 2 = sole active agent at any
+        # point), so state here can reflect live risk instead of pinning the score at
+        # its peak forever once any monotherapy hour has occurred (the Stage 4 bug).
+        max_mut = max((r["numeric"] for r in mutation_rows if r["numeric"] is not None), default=0)
+        comp = risk.compute_composite(current_state, max_mut, viral_load, cd4_count,
+                                      config.COMPOSITE, config.VL_BANDS, config.CD4_BANDS)
+        composite_label = comp["label"]
+        composite_colour = comp["colour"]
+        if comp["raw"] is not None:
             composite_contribs = {"state": current_state, "peak_state": worst_state,
-                                  "state_sev": state_sev, "mutation": max_mut,
-                                  "viral_load": vl_band, "cd4": cd4_band, "raw": composite_raw}
+                                  "state_sev": comp["state_sev"], "mutation": max_mut,
+                                  "viral_load": comp["vl_band"], "cd4": comp["cd4_band"],
+                                  "raw": comp["raw"]}
 
     # Human-readable state labels / colours for display.
     STATE_META = {
@@ -1165,7 +302,7 @@ elif app_view == "Patient Assessment Dashboard":
                 </div>
                 <div style='font-size:0.72rem; color:#3b82f6; letter-spacing:0.12em;
                             text-transform:uppercase;'>
-                    Clinical Decision Support System &nbsp;·&nbsp; v{APP_VERSION}
+                    Clinical Decision Support System &nbsp;·&nbsp; v{config.APP_VERSION}
                 </div>
             </div>
         </div>
@@ -1237,8 +374,8 @@ elif app_view == "Patient Assessment Dashboard":
         </div>""", unsafe_allow_html=True)
 
     with kpi4:
-        vl_color = ("#ef4444" if viral_load > VL_BANDS["high_above"]
-                    else "#f59e0b" if viral_load > VL_BANDS["undetectable_below"] else "#10b981")
+        vl_color = ("#ef4444" if viral_load > config.VL_BANDS["high_above"]
+                    else "#f59e0b" if viral_load > config.VL_BANDS["undetectable_below"] else "#10b981")
         vl_display = f"{viral_load:,}" if viral_load > 0 else "Undetectable"
         st.markdown(f"""
         <div class='metric-card'>
@@ -1248,10 +385,10 @@ elif app_view == "Patient Assessment Dashboard":
         </div>""", unsafe_allow_html=True)
 
     with kpi5:
-        cd4_color = ("#ef4444" if cd4_count < CD4_BANDS["severe_below"]
-                     else "#f59e0b" if cd4_count < CD4_BANDS["low_below"] else "#10b981")
-        cd4_note = ('Severe Immunocompromise' if cd4_count < CD4_BANDS["severe_below"]
-                    else 'Immunocompromised' if cd4_count < CD4_BANDS["low_below"] else 'Adequate')
+        cd4_color = ("#ef4444" if cd4_count < config.CD4_BANDS["severe_below"]
+                     else "#f59e0b" if cd4_count < config.CD4_BANDS["low_below"] else "#10b981")
+        cd4_note = ('Severe Immunocompromise' if cd4_count < config.CD4_BANDS["severe_below"]
+                    else 'Immunocompromised' if cd4_count < config.CD4_BANDS["low_below"] else 'Adequate')
         st.markdown(f"""
         <div class='metric-card'>
             <h3>CD4 Count (cells/μL)</h3>
@@ -1567,17 +704,20 @@ elif app_view == "Patient Assessment Dashboard":
                             No inhibitory quotient computed: the active moiety is intracellular
                             with no plasma-comparable efficacy threshold (methodology &sect;3.4).
                         </div>
+                        <div style='font-size:0.65rem; color:#94a3b8; margin-top:0.3rem;'>Class B (Ordinal)</div>
                     </div>
                     """, unsafe_allow_html=True)
                     continue
 
                 # Tier A drug: plasma concentration and above/below classification.
+                # "threshold" here is the PA-IC90 / therapeutic threshold (methodology
+                # §7.1) — MIC is a bacteriology term and does not apply to ARVs.
                 lvl = current_levels[drug]
-                mic = stats["threshold_mg_L"]
-                pct = (lvl / mic) * 100
-                if lvl >= mic:
-                    status_html = "<span class='status-stable'>ABOVE MIC</span>"
-                elif lvl >= mic * 0.05:
+                threshold = stats["threshold_mg_L"]
+                pct = (lvl / threshold) * 100
+                if lvl >= threshold:
+                    status_html = "<span class='status-stable'>ABOVE THRESHOLD</span>"
+                elif lvl >= threshold * 0.05:
                     status_html = "<span class='status-warning'>SUB-INHIBITORY</span>"
                 else:
                     status_html = "<span class='status-critical'>CLEARED</span>"
@@ -1600,11 +740,12 @@ elif app_view == "Patient Assessment Dashboard":
                         {level_html}
                     </div>
                     <div style='font-size:0.72rem; color:#64748b; margin-top:0.3rem;'>
-                        MIC: {mic} mg/L &nbsp;·&nbsp; {pct:.1f}% coverage
+                        Threshold: {threshold} mg/L (PA-IC90 / therapeutic threshold) &nbsp;·&nbsp; {pct:.1f}% coverage
                     </div>
                     <div style='font-size:0.72rem; color:#64748b;'>
                         Adj. t½: {adj_t:.1f}h &nbsp;·&nbsp; {stats["class"]}
                     </div>
+                    <div style='font-size:0.65rem; color:#94a3b8; margin-top:0.3rem;'>Class A (Derived)</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1698,6 +839,7 @@ elif app_view == "Patient Assessment Dashboard":
                         <div style='text-align:right;'>
                             <div style='font-size:0.65rem; color:#64748b;'>Mutation index</div>
                             <div style='color:{col}; font-weight:700; font-size:1.15rem;'>{row["label"]}</div>
+                            <div style='font-size:0.62rem; color:#94a3b8; margin-top:0.2rem;'>Class B (Ordinal)</div>
                         </div>
                     </div>
                 </div>
@@ -1800,7 +942,7 @@ elif app_view == "Patient Assessment Dashboard":
         # ── TB / Rifampicin Alert ──
         if tb_coinfection:
             directives_fired += 1
-            rif = INTERACTIONS["rifampicin_dtg"]
+            rif = config.INTERACTIONS["rifampicin_dtg"]
             st.markdown(f"""
             <div class='alert-critical'>
                 <div style='font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;'>
@@ -1818,7 +960,7 @@ elif app_view == "Patient Assessment Dashboard":
                     rifampicin achieves AUC/trough approximately 18–33% above once-daily without
                     rifampicin. The decay curve is modelled on the BD schedule when this flag is set.<br>
                    <strong>Monitoring:</strong> Repeat viral load at 4 weeks post-adjustment.<br>
-                   <span style='color:#94a3b8;'>Class A (Derived) &middot; {RULESET_FINGERPRINT}</span>
+                   <span style='color:#94a3b8;'>Class A (Derived) &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1836,7 +978,7 @@ elif app_view == "Patient Assessment Dashboard":
                     polymorphism, common locally and associated with higher efavirenz concentrations,
                     is a larger determinant of exposure than the rifampicin interaction. The v4.0
                     0.74 half-life multiplier has been removed (methodology &sect;5.2).<br>
-                    <span style='color:#94a3b8;'>Informational (Class B) &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Informational (Class B) &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1855,7 +997,7 @@ elif app_view == "Patient Assessment Dashboard":
                     of effect is established; the <strong>magnitude for dolutegravir is not sourced</strong>,
                     so no percentage is applied to the model (methodology &sect;5.3).<br>
                    <strong>Action:</strong> Counsel on cessation; record use.<br>
-                    <span style='color:#94a3b8;'>Class B (direction only) &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class B (direction only) &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1874,7 +1016,7 @@ elif app_view == "Patient Assessment Dashboard":
                     (some findings point towards inhibition, which would move concentrations the other way).
                     <strong>No effect is modelled</strong> (methodology &sect;5.4).<br>
                    <strong>Action:</strong> Record and discuss traditional medicine use as good practice.<br>
-                    <span style='color:#94a3b8;'>Class C (no modelled effect) &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class C (no modelled effect) &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1901,7 +1043,7 @@ elif app_view == "Patient Assessment Dashboard":
                     per-drug renally-cleared fraction is unsourced.<br>
                    <strong>Action:</strong> {action}<br>
                    <strong>Monitor:</strong> Monthly urinary phosphate/creatinine ratio; watch for Fanconi syndrome.<br>
-                    <span style='color:#94a3b8;'>Class C (safety) &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class C (safety) &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1909,13 +1051,14 @@ elif app_view == "Patient Assessment Dashboard":
         # ── Paediatric Alert ──
         if paediatric:
             directives_fired += 1
-            result, ped_cfg = paediatric_dtg_band(weight_kg, age_months)
+            ped_cfg = config.PAEDIATRIC_CFG
+            result = pk.paediatric_dtg_band(weight_kg, age_months, ped_cfg)
             status = result["status"]
             band = result["band"]
             min_age = ped_cfg.get("minimum_age_months", 1)
             class_line = (
                 f"<span style='color:#94a3b8;'>Class A (Derived) &middot; "
-                f"ruleset v{RULESET_VERSION}</span>"
+                f"ruleset v{config.RULESET_VERSION}</span>"
             )
             age_display = f"{age_months} months" if age_months is not None else "not entered"
 
@@ -2010,7 +1153,7 @@ elif app_view == "Patient Assessment Dashboard":
                     approximately <strong>{ms}–{me} h</strong> (duration {md} h).<br>
                    <strong>Action:</strong> Restart the full regimen simultaneously; do not restart
                     a single component. Order a viral load.<br>
-                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class B &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2026,7 +1169,7 @@ elif app_view == "Patient Assessment Dashboard":
                     resistant variant, so <strong>selection risk is low</strong>, but the patient is
                     without antiretroviral cover and wild-type virus will rebound (methodology &sect;8.1).<br>
                    <strong>Action:</strong> Restart the full regimen; assess for OI risk if CD4 is low.<br>
-                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class B &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2045,7 +1188,7 @@ elif app_view == "Patient Assessment Dashboard":
                     (duration {md} h) since the last dose.<br>
                    <strong>Action:</strong> Re-establish full adherence before that window; counsel on
                     the resistance risk of partial re-dosing.<br>
-                    <span style='color:#94a3b8;'>Class B &middot; {RULESET_FINGERPRINT}</span>
+                    <span style='color:#94a3b8;'>Class B &middot; {config.RULESET_FINGERPRINT}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2129,8 +1272,8 @@ elif app_view == "Patient Assessment Dashboard":
                 <tr>
                     <td>Viral Load Monitoring Guidance</td>
                     <td>Laboratory Monitoring</td>
-                    <td>Enhanced monitoring if VL >{VL_BANDS["high_above"]}</td>
-                    <td>{'<span class="status-critical">ACTIVE</span>' if viral_load > VL_BANDS["high_above"] else '<span class="status-stable">ROUTINE</span>'}</td>
+                    <td>Enhanced monitoring if VL >{config.VL_BANDS["high_above"]}</td>
+                    <td>{'<span class="status-critical">ACTIVE</span>' if viral_load > config.VL_BANDS["high_above"] else '<span class="status-stable">ROUTINE</span>'}</td>
                 </tr>
             </tbody>
         </table>
@@ -2209,7 +1352,7 @@ elif app_view == "Patient Assessment Dashboard":
                      "does not appear anywhere else on screen or in any export "
                      "(methodology §11.1).")
 
-            sn = RULES.get("support_needs", {})
+            sn = config.RULES.get("support_needs", {})
             trig = sn.get("triggers", {})
             transport_trigger = (
                 distance_km >= trig.get("distance_km_threshold", 20)
@@ -2256,10 +1399,10 @@ elif app_view == "Patient Assessment Dashboard":
 
         # ── Audit trail — real SHA-256 chain (methodology section 13.2) ──
         # All rows belong to a single assessment recorded at one instant.
-        # Display time is SAST; the hashed entry stores UTC. Full SQLite
+        # Display time is config.SAST; the hashed entry stores UTC. Full SQLite
         # persistence is deferred to Stage 6; this session builds the chain
         # in memory so the displayed hashes are genuine and verifiable.
-        now = datetime.datetime.now(SAST)
+        now = datetime.datetime.now(config.SAST)
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         ts_sast = now.strftime("%Y-%m-%d %H:%M:%S")
         ts_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2299,9 +1442,9 @@ elif app_view == "Patient Assessment Dashboard":
             f"Entitlements: {', '.join(t for t, _ in entitlements)}",
             "INFO"))
 
-        data_hashes = dict(DATA_HASHES)
+        data_hashes = dict(config.DATA_HASHES)
         audit_events = []
-        prev_hash = GENESIS_HASH
+        prev_hash = auditlog.GENESIS_HASH
         for seq, (event, detail, level) in enumerate(raw_events, start=1):
             entry = {
                 "seq": seq,
@@ -2313,11 +1456,11 @@ elif app_view == "Patient Assessment Dashboard":
                 "event": event,
                 "detail": detail,
                 "level": level,
-                "ruleset_version": RULESET_VERSION,
+                "ruleset_version": config.RULESET_VERSION,
                 "data_hashes": data_hashes,
                 "prev_hash": prev_hash,
             }
-            entry_hash = chain_entry(prev_hash, entry)
+            entry_hash = auditlog.chain_entry(prev_hash, entry)
             audit_events.append({
                 "seq": seq,
                 "timestamp": ts_sast,
@@ -2334,6 +1477,36 @@ elif app_view == "Patient Assessment Dashboard":
             "WARNING":  "#f59e0b",
             "CRITICAL": "#ef4444"
         }
+
+        # ── Persist this assessment to the append-only SQLite audit log (§13.2) ──
+        # Real disk persistence, distinct from the in-memory session narrative above.
+        # One row per rendered assessment: seq, timestamp_utc, patient_ref,
+        # clinician_ref, facility_code, inputs_json, outputs_json, ruleset_version,
+        # data_hashes, prev_hash, entry_hash (chained via auditlog.chain_entry).
+        audit_db_path = str(config.PACKAGE_DIR / "audit" / "audit.sqlite3")
+        audit_conn = auditlog.connect(audit_db_path)
+        persisted_row = auditlog.append_entry(
+            audit_conn,
+            timestamp_utc=ts_utc,
+            patient_ref=patient_id,
+            clinician_ref=clinician,
+            facility_code=facility_short,
+            inputs={
+                "regimen": regimen, "days_missed": days_missed,
+                "tb_coinfection": tb_coinfection, "st_johns_wort": st_johns_wort,
+                "african_potato": african_potato, "egfr": egfr,
+                "paediatric": paediatric, "weight_kg": weight_kg, "age_months": age_months,
+                "viral_load": viral_load, "cd4_count": cd4_count,
+            },
+            outputs={
+                "regimen_state": current_state, "composite_band": composite_label,
+                "monotherapy_window": mono_window,
+                "mutation_index": [{"drug": r["name"], "label": r["label"], "numeric": r["numeric"]}
+                                   for r in mutation_rows],
+            },
+            ruleset_version=config.RULESET_VERSION,
+            data_hashes=data_hashes,
+        )
 
         # ── Render Audit Table ──
         rows_html = ""
@@ -2381,13 +1554,59 @@ elif app_view == "Patient Assessment Dashboard":
         st.markdown(f"""
         <div style='margin-top:0.6rem; font-size:0.7rem; color:#64748b; line-height:1.6;'>
             Each row's hash is <strong>SHA-256(previous hash + canonical JSON of the row)</strong>,
-            seeded from a genesis hash of {GENESIS_HASH[:8]}…. Altering any row changes every
+            seeded from a genesis hash of {auditlog.GENESIS_HASH[:8]}…. Altering any row changes every
             hash after it, so the chain is <strong>tamper-evident</strong>. It is <strong>not
             tamper-proof</strong>: an actor with write access can rebuild the whole chain.
             Genuine tamper resistance would require publishing the chain head outside this system.
-            {RULESET_FINGERPRINT}.
+            {config.RULESET_FINGERPRINT}.
         </div>
         """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Persisted audit log (SQLite, append-only, §13.2) ──
+        st.markdown("<p class='section-header'>Persisted Audit Log — SQLite, Append-Only</p>",
+                    unsafe_allow_html=True)
+        persisted_rows = auditlog.read_all(audit_conn)
+        st.markdown(f"""
+        <div style='font-size:0.72rem; color:#94a3b8; margin-bottom:0.5rem;'>
+            {len(persisted_rows)} row(s) persisted to disk at <code>{html.escape(audit_db_path)}</code>.
+            Each rendered assessment appends a new row here — this is a real table on disk, not the
+            in-memory session narrative above. Row {persisted_row['seq']} was just appended.
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_verify1, col_verify2 = st.columns([1, 3])
+        with col_verify1:
+            verify_clicked = st.button("Verify chain integrity")
+        if verify_clicked:
+            chain_ok, bad_seq = auditlog.verify_chain(audit_conn)
+            if chain_ok:
+                st.markdown("""
+                <div class='alert-success'>
+                    <strong>Chain verified.</strong> Every stored row's hash matches
+                    SHA-256(previous hash + its own fields). No tampering detected.
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class='alert-critical'>
+                    <strong>Chain broken at seq={bad_seq}.</strong> A stored row no longer matches its
+                    hash, or its prev_hash no longer matches the row before it — tampering or corruption
+                    detected from that row onward.
+                </div>
+                """, unsafe_allow_html=True)
+
+        with st.expander(f"Show persisted rows (most recent {min(10, len(persisted_rows))} of {len(persisted_rows)})"):
+            for row in persisted_rows[-10:]:
+                st.markdown(f"""
+                <div style='font-family:monospace; font-size:0.68rem; color:#64748b;
+                            border-bottom:1px solid #1e3a5f; padding:0.35rem 0;'>
+                    seq={row['seq']} &nbsp;|&nbsp; {row['timestamp_utc']} &nbsp;|&nbsp;
+                    {html.escape(row['patient_ref'])} &nbsp;|&nbsp;
+                    hash={row['entry_hash'][:16]}&hellip;
+                </div>
+                """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2438,58 +1657,58 @@ elif app_view == "Patient Assessment Dashboard":
                 lvl = current_levels[drug]
                 thr = stats["threshold_mg_L"]
                 state = "ABOVE" if lvl >= thr else "BELOW"
-                drug_level_rows.append(f"{drug}: {lvl:.5f} mg/L (MIC={thr} | {state} MIC)")
+                drug_level_rows.append(f"{drug}: {lvl:.5f} mg/L (threshold={thr} | {state} threshold)")
             elif drug in current_levels:
                 drug_level_rows.append(f"{drug}: {current_levels[drug]:.5f} mg/L plasma "
                                        "(prodrug — no plasma threshold, section 3.4)")
         drug_level_text = "\n".join(drug_level_rows)
 
         report_text = f"""
-ResistanceMap ZA OS — Clinical Assessment Report
-================================================
-Software: ResistanceMap ZA OS v{APP_VERSION} · {RULESET_FINGERPRINT}
-Research prototype — not an approved medical device. Not for clinical use.
-Generated: {now.strftime("%d %B %Y %H:%M:%S")} SAST
-Patient ID: {patient_id}
-Facility: {facility}
-Clinician: {clinician}
+    ResistanceMap ZA OS — Clinical Assessment Report
+    ================================================
+    Software: ResistanceMap ZA OS v{config.APP_VERSION} · {config.RULESET_FINGERPRINT}
+    Research prototype — not an approved medical device. Not for clinical use.
+    Generated: {now.strftime("%d %B %Y %H:%M:%S")} SAST
+    Patient ID: {patient_id}
+    Facility: {facility}
+    Clinician: {clinician}
 
-PHARMACOKINETIC SUMMARY
------------------------
-Regimen: {regimen}
-Days Defaulted: {days_missed}
-Composite Risk Band: {composite_label or 'n/a'} (ordinal, Class C — not a calibrated 0-100 score)
-Regimen State (at {hours_missed}h): {STATE_META.get(current_state, ('not modelled', ''))[0] if current_state else 'not modelled'}
-Monotherapy Window: {f'{mono_window[0]}-{mono_window[1]}h (duration {mono_window[2]}h)' if mono_window else 'none in the modelled horizon'}
+    PHARMACOKINETIC SUMMARY
+    -----------------------
+    Regimen: {regimen}
+    Days Defaulted: {days_missed}
+    Composite Risk Band: {composite_label or 'n/a'} (ordinal, Class C — not a calibrated 0-100 score)
+    Regimen State (at {hours_missed}h): {STATE_META.get(current_state, ('not modelled', ''))[0] if current_state else 'not modelled'}
+    Monotherapy Window: {f'{mono_window[0]}-{mono_window[1]}h (duration {mono_window[2]}h)' if mono_window else 'none in the modelled horizon'}
 
-DRUG LEVELS AT ASSESSMENT
---------------------------
-{drug_level_text}
+    DRUG LEVELS AT ASSESSMENT
+    --------------------------
+    {drug_level_text}
 
-ACTIVE MODIFIERS
-----------------
-{chr(10).join([f"- {m}: {d}" for m, d in flat_mods]) if flat_mods else "None"}
+    ACTIVE MODIFIERS
+    ----------------
+    {chr(10).join([f"- {m}: {d}" for m, d in flat_mods]) if flat_mods else "None"}
 
-CLINICAL DIRECTIVES
--------------------
-TB Co-infection: {"YES – DTG 50 mg BD (rifampicin, UGT1A1)" if tb_coinfection else "No"}
-St John's Wort: {"YES – direction only, no magnitude" if st_johns_wort else "No"}
-African Potato: {"YES – no modelled effect; counsel" if african_potato else "No"}
-Renal (eGFR): {egfr} mL/min/1.73m2 {"— safety alert" if egfr < 60 else ""}
-Paediatric Protocol: {"YES – Weight-band dosing active" if paediatric else "No"}
+    CLINICAL DIRECTIVES
+    -------------------
+    TB Co-infection: {"YES – DTG 50 mg BD (rifampicin, UGT1A1)" if tb_coinfection else "No"}
+    St John's Wort: {"YES – direction only, no magnitude" if st_johns_wort else "No"}
+    African Potato: {"YES – no modelled effect; counsel" if african_potato else "No"}
+    Renal (eGFR): {egfr} mL/min/1.73m2 {"— safety alert" if egfr < 60 else ""}
+    Paediatric Protocol: {"YES – Weight-band dosing active" if paediatric else "No"}
 
-SUPPORT NEEDS (entitlements, not a score — methodology section 11.2)
---------------------------------------------------------------------
-{chr(10).join(f"- {t}: {d}" for t, d in entitlements)}
+    SUPPORT NEEDS (entitlements, not a score — methodology section 11.2)
+    --------------------------------------------------------------------
+    {chr(10).join(f"- {t}: {d}" for t, d in entitlements)}
 
-LABORATORY VALUES
------------------
-Viral Load: {viral_load:,} copies/mL
-CD4 Count: {cd4_count} cells/μL
+    LABORATORY VALUES
+    -----------------
+    Viral Load: {viral_load:,} copies/mL
+    CD4 Count: {cd4_count} cells/μL
 
-AUDIT INTEGRITY
----------------
-""" + "\n".join([f"[{e['level']}] {e['timestamp']} — {e['event']}" for e in audit_events])
+    AUDIT INTEGRITY
+    ---------------
+    """ + "\n".join([f"[{e['level']}] {e['timestamp']} — {e['event']}" for e in audit_events])
 
         with exp_col1:
             st.download_button(
@@ -2524,8 +1743,8 @@ AUDIT INTEGRITY
     st.markdown(f"""
     <div style='border-top:1px solid #1e3a5f; padding-top:1rem; text-align:center;
                 font-size:0.65rem; color:#334155; line-height:2;'>
-        ResistanceMap ZA OS v{APP_VERSION} &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
-        {RULESET_FINGERPRINT}<br>
+        ResistanceMap ZA OS v{config.APP_VERSION} &nbsp;·&nbsp; Clinical Decision Support System Prototype<br>
+        {config.RULESET_FINGERPRINT}<br>
         Contact: sbagaria2009@gmail.com<br>
         <span style='color:#1e3a5f;'>
             Educational and research prototype only — not an approved medical device.
@@ -2534,3 +1753,4 @@ AUDIT INTEGRITY
         </span>
     </div>
     """, unsafe_allow_html=True)
+

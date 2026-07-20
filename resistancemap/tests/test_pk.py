@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from engine import pk
+from resistancemap.engine import pk
 
 REL = 1e-4
 

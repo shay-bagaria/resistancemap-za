@@ -78,3 +78,53 @@ def allometric_half_life_factor(weight_kg, reference_kg=70.0, exponent=0.25):
     if weight_kg <= 0 or reference_kg <= 0:
         raise ValueError("weights must be positive")
     return (weight_kg / reference_kg) ** exponent
+
+
+# ── Paediatric dolutegravir dosing lookup (methodology section 6) ───────────
+def paediatric_dtg_band(weight_kg, age_months, cfg):
+    """Resolve the WHO dolutegravir dose for a weight and age.
+
+    cfg is the parsed `paediatric_dtg_dosing` section of rules.yaml (a dict with
+    `minimum_age_months` and `bands`, each band carrying `min_kg`/`max_kg` and a
+    `doses` list, optionally age-split via `min_age_months`/`max_age_months`).
+
+    Returns a dict with:
+      status: one of "ok", "weight_below_bands", "age_below_coverage",
+              "age_required", "age_outside_coverage"
+      band:   the matched weight band dict (or None), carrying true boundaries
+      dose:   the matched dose dict (or None)
+
+    The 6 to <10 kg band is age-dependent (IMPAACT P1093): 10 mg from four weeks
+    to under six months, 15 mg from six months. Other bands are age-independent.
+    Pure function: no Streamlit, no module-level state — cfg is passed in.
+    """
+    min_age = cfg.get("minimum_age_months", 1)
+
+    band = None
+    for b in cfg["bands"]:
+        lo, hi = b["min_kg"], b["max_kg"]
+        if weight_kg >= lo and (hi is None or weight_kg < hi):
+            band = b
+            break
+    if band is None:
+        return {"status": "weight_below_bands", "band": None, "dose": None}
+
+    doses = band["doses"]
+    age_dependent = any("min_age_months" in d or "max_age_months" in d for d in doses)
+
+    # Below the source table's youngest age, show no dose regardless of band.
+    if age_months is not None and age_months < min_age:
+        return {"status": "age_below_coverage", "band": band, "dose": None}
+
+    if not age_dependent:
+        return {"status": "ok", "band": band, "dose": doses[0]}
+
+    if age_months is None:
+        return {"status": "age_required", "band": band, "dose": None}
+
+    for d in doses:
+        lo = d.get("min_age_months", 0)
+        hi = d.get("max_age_months")
+        if age_months >= lo and (hi is None or age_months < hi):
+            return {"status": "ok", "band": band, "dose": d}
+    return {"status": "age_outside_coverage", "band": band, "dose": None}

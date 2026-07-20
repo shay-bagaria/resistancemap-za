@@ -299,7 +299,9 @@ Source: WHO weight-band recommendations (IMPAACT P1093 + ODYSSEY population-PK a
 
 ### 7.1 Terminology correction
 
-The v4.0 application used MIC throughout. Minimum inhibitory concentration is a bacteriology term and does not apply to antiretrovirals, which are assessed by inhibitory concentration values from cell culture (IC50, IC90, and protein-adjusted forms). The internal `mic` key was renamed `threshold_mg_L`; the user-facing terminology sweep completes in Stage 6.
+The v4.0 application used MIC throughout. Minimum inhibitory concentration is a bacteriology term and does not apply to antiretrovirals, which are assessed by inhibitory concentration values from cell culture (IC50, IC90, and protein-adjusted forms). The internal `mic` key was renamed `threshold_mg_L` in Stage 1b.
+
+**As built** (Stage 6.3). Every user-facing "MIC" was replaced across the drug status panel, the report export, and the patient guide (glossary, "PK Decay Curves" and "Mutation & Resistance" tab descriptions, which previously still described the deleted MIC line and the deleted mutation-probability output). The glossary entry now explains why MIC does not apply and defines PA-IC90/therapeutic threshold, inhibitory quotient, active moiety and functional monotherapy instead. Code comments and the historical corrections table (§17) still reference "MIC" where describing what v4.0 did; that is intentional.
 
 ### 7.2 Definition
 
@@ -491,6 +493,8 @@ The v4.0 model scored socio-economic disadvantage (unemployment, walking, non-di
 
 Replacement (Stage 5): a clinical risk panel from PK/lab inputs, and a separate support-needs panel expressing socio-economic inputs as service entitlements (multi-month dispensing, transport support, community-health-worker contact, nutritional referral). Non-disclosure contributes no score and gets no itemised display. The itemised contribution chart is not rendered in any patient-visible view.
 
+**As built** (Stage 5.2). `ui/dashboard.py` Tab 4 renders two independent panels: clinical risk repeats the composite band already computed for Tab 1 (no new calculation); support needs derives its entitlements from `rules.yaml`'s `support_needs` block (distance/missed-appointment trigger thresholds, class C). The "Employment Status" input was dropped entirely — no entitlement in the redesign reads it, and no other input reads it either, so it was removed rather than kept as an input with no effect. "Adherence counselling" is rendered as a standing offer to every patient regardless of their disclosure answer, so its presence on screen cannot be read as a signal of any individual patient's disclosure status; this was verified by asserting the string "Non-disclosed" never appears in the rendered page, including immediately after selecting it. `adherence_weights` is retained in `rules.yaml` only as the historical record of what was scored, marked `status: restructured`; it is no longer read by the application.
+
 ---
 
 ## 12. Clinical directive rules — **mixed, each rule carries its class**
@@ -520,7 +524,9 @@ def chain_entry(prev_hash, entry):
     return hashlib.sha256((prev_hash + payload).encode("utf-8")).hexdigest()
 ```
 
-This is tamper *evidence*, not tamper proofing: an actor with write access can rebuild the chain. The interface claims only tamper evidence. Timestamps display in Africa/Johannesburg and store UTC. Full SQLite persistence is scheduled for Stage 6.
+This is tamper *evidence*, not tamper proofing: an actor with write access can rebuild the chain. The interface claims only tamper evidence. Timestamps display in Africa/Johannesburg and store UTC.
+
+**As built** (Stage 6.2). `audit/log.py` implements the append-only SQLite table with the fields listed above (`seq`, `timestamp_utc`, `patient_ref`, `clinician_ref`, `facility_code`, `inputs_json`, `outputs_json`, `ruleset_version`, `data_hashes`, `prev_hash`, `entry_hash`), reusing `chain_entry`. `verify_chain()` recomputes every row's hash from its stored fields and checks the prev_hash linkage, returning the first broken `seq` if any row or link fails; `tests/test_audit.py` asserts this on an untouched chain and on both a middle-row and a last-row tamper, each via a raw `UPDATE` that bypasses the append-only API (the way an actor with direct database write access could). The dashboard's Audit tab persists one row per rendered assessment to `audit/audit.sqlite3` (gitignored — runtime data, not source) and exposes a "Verify chain integrity" button that calls `verify_chain()` live and reports which row broke, if any. This is separate from, and in addition to, the in-memory per-session narrative table (the individual named events such as "GUIDELINE ALERT FIRED") that renders above it, which is also a genuine SHA-256 chain but is not persisted to disk.
 
 ---
 

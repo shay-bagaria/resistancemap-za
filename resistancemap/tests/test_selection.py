@@ -1,5 +1,5 @@
 """Unit tests for engine/selection.py (methodology section 8, 9.2)."""
-from engine import selection as sel
+from resistancemap.engine import selection as sel
 
 # TLE, methodology 8.4 parameters (unverified EFV values as specified there).
 TLE = [

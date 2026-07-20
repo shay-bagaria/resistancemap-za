@@ -2,3 +2,7 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Runtime audit database (resistancemap/audit/log.py) — generated, not source.
+*.sqlite3
+.pytest_cache/
