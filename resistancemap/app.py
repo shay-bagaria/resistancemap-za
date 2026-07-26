@@ -5,6 +5,16 @@ Research prototype — not an approved medical device. Not for clinical use.
 Run with: streamlit run resistancemap/app.py
 """
 
+import os
+import sys
+
+# Streamlit's script runner only adds this file's own directory (resistancemap/)
+# to sys.path, not its parent — so the package-qualified imports below can't
+# resolve `resistancemap` unless the repo root is added explicitly here.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import streamlit as st
 
 # st.set_page_config must be the first Streamlit call in the process, so the
